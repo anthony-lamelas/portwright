@@ -43,14 +43,15 @@ def extract_api(package_dir: str | Path) -> list[str]:
         if any(part.startswith("_") and part != "__init__.py" for part in relative.parts):
             continue
         tree = ast.parse(path.read_text(encoding="utf-8"))
-        exported = _dunder_all(tree)
+        # __all__ only says what `import *` brings in. Libraries often document public
+        # names outside it, so a port must cover both.
+        exported = _dunder_all(tree) or []
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                if node.name in exported if exported is not None else _is_public(node.name):
+                if node.name in exported or _is_public(node.name):
                     found.add(node.name)
             elif isinstance(node, ast.ClassDef):
-                if node.name in exported if exported is not None else _is_public(node.name):
+                if node.name in exported or _is_public(node.name):
                     found.update(_class_members(node))
-        if exported:
-            found.update(exported)
+        found.update(exported)
     return sorted(found)

@@ -29,8 +29,20 @@ DEPTH_LIMIT = 40
 _ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
 
 
+class PythonExpression:
+    """A Python expression both sides evaluate, for inputs like callback functions."""
+
+    def __init__(self, source: str):
+        self.source = source
+
+    def __repr__(self):
+        return f"PythonExpression({self.source!r})"
+
+
 def encode(value):
     """Turn an input value into JSON the other side can rebuild exactly."""
+    if isinstance(value, PythonExpression):
+        return {"t": "python", "v": value.source}
     if value is None:
         return {"t": "none"}
     kind = type(value)
@@ -83,6 +95,9 @@ def decode(data, handles):
         return decimal.Decimal(value)
     if tag == "handle":
         return handles.objects[value]
+    if tag == "python":
+        # Comes only from check files, which run outside the library being tested.
+        return eval(value, {"__builtins__": __builtins__})  # noqa: S307
     raise ValueError(f"unknown input tag {tag}")
 
 
@@ -170,7 +185,7 @@ def canon(value, handles, depth=0, seen=()):
     if _is_iterator(value):
         return _drain(value, next_level)
     if callable(value) and hasattr(value, "__qualname__"):
-        return {"t": "callable", "v": value.__qualname__}
+        return {"t": "callable", "v": value.__qualname__, "handle": handles.add(value)}
     return {
         "t": "object",
         "class": kind.__qualname__,

@@ -245,8 +245,9 @@ class Session:
         if self.reference.generation != reference_generation or self.candidate.generation != candidate_generation:
             return None
         value = left.get("value")
-        if isinstance(value, dict) and value.get("t") == "object":
-            return Pair(self, value["class"], value["handle"], right["value"]["handle"])
+        if isinstance(value, dict) and value.get("t") in ("object", "callable"):
+            name = value.get("class") or api
+            return Pair(self, name, value["handle"], right["value"]["handle"])
         return value
 
     def _count(self, api, outcome) -> None:

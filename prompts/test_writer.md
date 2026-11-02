@@ -19,7 +19,9 @@ def test_truncate(text, width):
 
 For classes, use `RuleBasedStateMachine`. `same("Thing", arg)` returns a pair, and `pair.call("method", x)` or `pair.get("attribute")` act on both versions. `same` returns a description of the result, not a live value.
 
-`same` compares type and value, exception type, args, message, and base classes, changes to arguments, printed output, and when iterators fail. Inputs can be None, bool, int, float, str, bytes, bytearray, list, tuple, set, frozenset, dict, and Decimal. Callables can't be passed, so test custom-converter behavior by adding fixed helper modules only if the API truly needs them, and note what can't be reached in `/work/out/tried.md`.
+`same` compares type and value, exception type, args, message, and base classes, changes to arguments, printed output, and when iterators fail. Inputs can be None, bool, int, float, str, bytes, bytearray, list, tuple, set, frozenset, dict, Decimal, and `PythonExpression`.
+
+To pass a callback, use `PythonExpression("lambda s: s.upper()")`, from `portwright.compare`, which each version evaluates for itself. It can be nested in dicts and lists. When a call returns a function or object, `same` returns a pair, so `decorator = same("make_decorator", "x")` then `decorator.call("__call__", PythonExpression("lambda s: s"))` calls it on both sides. Note anything you truly can't reach in `/work/out/tried.md`.
 
 ## What to cover
 

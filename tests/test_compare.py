@@ -4,6 +4,7 @@ import textwrap
 
 import pytest
 
+from portwright.compare import PythonExpression
 from portwright.compare.session import Divergence, Session, Side, WorkerStartError
 
 
@@ -162,6 +163,14 @@ def test_unimportable_library_is_reported(tmp_path):
     session = Session(library, library)
     with pytest.raises(WorkerStartError):
         session.start()
+
+
+def test_callbacks_and_returned_functions_work_on_both_sides(compare):
+    body = "def make(n):\n    def inner(f):\n        return f(n)\n    return inner"
+    session = compare(body, body.replace("return f(n)", "return f(n + 1)"))
+    returned = session.same("make", 1)
+    with pytest.raises(Divergence, match="outcome.value"):
+        returned.call("__call__", PythonExpression("lambda value: value * 2"))
 
 
 def test_methods_on_objects_are_compared_on_both_sides(compare):

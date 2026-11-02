@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import uuid
 from dataclasses import dataclass, field
@@ -86,6 +87,20 @@ def parse_result(stdout: str, returncode: int) -> AgentResult:
     return AgentResult("ok", text, usage)
 
 
+def stop_container(name: str) -> None:
+    """Stop a container. Snap Docker can deny ``docker kill``, so fall back to its process."""
+    if subprocess.run(["docker", "kill", name], capture_output=True, check=False).returncode == 0:
+        return
+    pid = subprocess.run(
+        ["docker", "inspect", "-f", "{{.State.Pid}}", name], capture_output=True, text=True, check=False
+    ).stdout.strip()
+    if pid.isdigit() and int(pid) > 0:
+        try:
+            os.kill(int(pid), signal.SIGKILL)
+        except OSError:
+            pass
+
+
 class DockerClaude:
     """Runs Claude Code in a container with no network except the allowlist proxy."""
 
@@ -154,7 +169,7 @@ class DockerClaude:
                 capture_output=True, text=True, timeout=session.timeout, check=False,
             )
         except subprocess.TimeoutExpired:
-            subprocess.run(["docker", "kill", name], capture_output=True, check=False)
+            stop_container(name)
             return AgentResult("timeout", f"session passed {session.timeout:.0f}s")
         finally:
             credentials = home / ".claude" / ".credentials.json"

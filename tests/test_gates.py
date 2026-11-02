@@ -22,6 +22,14 @@ def test_manifest_lists_the_public_api():
     assert not any(name.startswith("_") for name in API)
 
 
+def test_manifest_includes_public_names_outside_dunder_all(tmp_path):
+    (tmp_path / "__init__.py").write_text(
+        "__all__ = ['listed']\ndef listed(): pass\ndef also_public(): pass\ndef _private(): pass\n"
+        "class Thing:\n    def method(self): pass\n"
+    )
+    assert extract_api(tmp_path) == ["Thing", "Thing.method", "also_public", "listed"]
+
+
 def test_good_checks_pass_against_the_library_itself():
     result = self_comparison_gate(GOOD, SIDE, api=API, max_examples=100)
     assert result.passed, result.summary
