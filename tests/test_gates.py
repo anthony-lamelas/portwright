@@ -30,6 +30,13 @@ def test_manifest_includes_public_names_outside_dunder_all(tmp_path):
     assert extract_api(tmp_path) == ["Thing", "Thing.method", "also_public", "listed"]
 
 
+def test_manifest_names_submodule_apis_by_where_callers_find_them(tmp_path):
+    (tmp_path / "__init__.py").write_text("from pkg.time import shown\n__all__ = ['shown']\n")
+    (tmp_path / "time.py").write_text("def shown(): pass\ndef hidden(): pass\nclass Unit:\n    def name(self): pass\n")
+    (tmp_path / "_private.py").write_text("def secret(): pass\n")
+    assert extract_api(tmp_path) == ["shown", "time.Unit", "time.Unit.name", "time.hidden"]
+
+
 def test_good_checks_pass_against_the_library_itself():
     result = self_comparison_gate(GOOD, SIDE, api=API, max_examples=100)
     assert result.passed, result.summary
