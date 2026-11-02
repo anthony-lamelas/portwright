@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+import platform
 
 IMAGE = "portwright-toolchain:dev"
 
@@ -25,6 +26,25 @@ def image_available(image: str = IMAGE) -> bool:
         return True
     done = subprocess.run(["docker", "image", "inspect", image], capture_output=True, check=False)
     return done.returncode == 0
+
+
+def python_mismatch(image: str = IMAGE) -> str | None:
+    """Explain any Python version difference between this process and the toolchain.
+
+    Agents preview their work with the toolchain's Python, and the gates run the
+    original library with this one. Standard library behavior changes between patch
+    releases, so a mismatch makes correct fixes fail the gates.
+    """
+    done = subprocess.run(
+        ["docker", "run", "--rm", image, "python", "-c", "import platform; print(platform.python_version())"],
+        capture_output=True, text=True, check=False,
+    )
+    if done.returncode != 0:
+        return f"can't read the toolchain's Python version: {done.stderr[-300:]}"
+    theirs, ours = done.stdout.strip(), platform.python_version()
+    if theirs == ours:
+        return None
+    return f"this harness runs Python {ours}, but the toolchain has {theirs}. Run: uv venv --python {theirs} .venv"
 
 
 def run_in_toolchain(

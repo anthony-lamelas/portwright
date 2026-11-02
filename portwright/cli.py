@@ -14,7 +14,7 @@ from portwright.auth import SUBSCRIPTION, Auth, AuthError
 from portwright.orchestrator import Config, Porter
 from portwright.sandbox import AllowlistProxy
 from portwright.state import JsonStore
-from portwright.toolchain import image_available
+from portwright.toolchain import image_available, python_mismatch
 
 LIMIT_WAIT_SECONDS = 15 * 60
 
@@ -55,6 +55,9 @@ def command_run(options) -> int:
         sys.exit(str(error))
     if not image_available():
         sys.exit("The toolchain image isn't built. Run: docker build --network host -t portwright-toolchain:dev -f docker/toolchain.Dockerfile docker")
+    mismatch = python_mismatch()
+    if mismatch:
+        sys.exit(mismatch)
     config = _load_or_create_config(options)
     socket_path = Path(config.run_dir) / "build" / "proxy" / "p.sock"
     proxy = AllowlistProxy(socket_path)

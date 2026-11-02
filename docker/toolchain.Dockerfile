@@ -1,6 +1,6 @@
 # Everything needed to build, lint, and test a port. It stays in this image so
 # running the harness doesn't require installing Rust on the host.
-FROM python:3.12-bookworm
+FROM python:3.12.14-bookworm
 
 ENV RUSTUP_HOME=/opt/rustup CARGO_HOME=/opt/cargo PATH=/opt/cargo/bin:$PATH
 

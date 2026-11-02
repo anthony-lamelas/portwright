@@ -510,18 +510,34 @@ class Porter:
     def _fix_until(self, name: str, check, intro: str) -> Verification:
         """Send failures to a debugger until the check passes or the rounds run out."""
         verdict = check()
+        carried: str | None = None  # the last rejected attempt, so its work isn't redone
+        rejection = ""
         for round_number in range(1, self.config.fix_rounds + 1):
             if verdict.passed:
                 return verdict
             self._flush_regressions()
             task = f"fix-{name}-{round_number}"
-            workspace = self.workspaces.create(task)
-            prompt = f"{intro}\n\nThe harness found:\n{verdict.for_agent()}\n\nCheck your work with: python -m portwright.agent_check port"
+            workspace = self.workspaces.create(task, start=carried)
+            prompt = f"{intro}\n\nThe main branch fails with:\n{verdict.for_agent()}\n\n"
+            if rejection:
+                prompt += (
+                    "Your workspace already holds the previous attempt. Its fixes are there, so build on them. "
+                    f"The harness rejected that attempt, using new random inputs, because:\n{rejection}\n\n"
+                )
+            prompt += "Check your work with: python -m portwright.agent_check port"
             self._agent("debugger", task, prompt, self._port_mounts(workspace, task))
             self.workspaces.commit(workspace, f"debugger: {task}")
             merged = self.workspaces.merge(task, workspace, lambda path: self._gate_full(path, task))
-            if not merged.merged:
-                self._log(f"  rejected {task}: {merged.reason}")
+            if merged.merged:
+                carried, rejection = None, ""
+            else:
+                rejection = merged.detail[-4000:]
+                self._log(f"  rejected {task}: {merged.reason}\n{rejection[-1500:]}")
+                if merged.reason == "gate":
+                    carried = self.workspaces.revision(workspace)
+                    self.workspaces.keep(carried)
+                else:  # a conflict can't be built on, so start again from main
+                    carried = None
             self.workspaces.discard(task)
             shutil.rmtree(self._target(task), ignore_errors=True)
             verdict = check()
@@ -665,6 +681,9 @@ class Porter:
         return result
 
     def _phase_cleanup(self) -> None:
+        # Shared Rust files were frozen so that parallel porters couldn't collide. Porting
+        # is over now, and workarounds for the freeze are exactly what cleanup should remove.
+        self.run_state.update(lambda d: d.update(shared={k: v for k, v in d["shared"].items() if not k.startswith("crates/")}))
         before = count_rust_lines(self.paths.port)
         review = self.paths.public / "review.md"
         findings = review.read_text(encoding="utf-8") if review.exists() else "No review available."

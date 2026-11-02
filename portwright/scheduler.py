@@ -167,13 +167,21 @@ class Workspaces:
             cwd=cwd or self.repo, capture_output=True, text=True, check=check,
         )
 
-    def create(self, name: str) -> Path:
+    def create(self, name: str, start: str | None = None) -> Path:
+        """Make a worktree from the main branch, or from ``start`` to continue earlier work."""
         path = self.worktrees / name
         if path.exists():  # resuming after a crash: keep any work already there
             return path
         self._git("worktree", "prune")
-        self._git("worktree", "add", "--force", "-B", f"task/{name}", str(path), self.branch)
+        self._git("worktree", "add", "--force", "-B", f"task/{name}", str(path), start or self.branch)
         return path
+
+    def revision(self, path: str | Path) -> str:
+        return self._git("rev-parse", "HEAD", cwd=path).stdout.strip()
+
+    def keep(self, revision: str) -> None:
+        """Stop git from garbage-collecting a rejected commit that later work builds on."""
+        self._git("update-ref", "refs/portwright/last-rejected", revision)
 
     def commit(self, path: str | Path, message: str) -> bool:
         """Commit everything in a worktree. Returns False if nothing changed."""

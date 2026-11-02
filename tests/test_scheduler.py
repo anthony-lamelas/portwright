@@ -2,10 +2,12 @@
 
 import subprocess
 import threading
+from types import SimpleNamespace
 
 import pytest
 
 from portwright.agents import LimitReached
+from portwright.orchestrator import Porter
 from portwright.scheduler import BLOCKED, CLAIMED, MERGED, PENDING, RETRY, TaskBoard, Workspaces, run_board
 
 
@@ -182,6 +184,35 @@ def test_merge_requires_the_gate_to_pass(workspaces):
     assert (workspaces.repo / "a.txt").read_text() == "one\n"
     assert workspaces.merge("t1", path, always).merged
     assert (workspaces.repo / "a.txt").read_text() == "changed\n"
+
+
+def test_a_rejected_fix_reaches_the_next_debugger(workspaces, tmp_path):
+    """The next round must see the earlier work and why it was rejected."""
+    prompts, seen = [], []
+
+    def agent(_role, task, prompt, _mounts):
+        prompts.append(prompt)
+        path = workspaces.worktrees / task
+        seen.append((path / "a.txt").read_text())
+        (path / "a.txt").write_text((path / "a.txt").read_text() + "fix\n")
+
+    gate_results = iter([(False, "needs a second fix"), (True, "")])
+    verdicts = iter([
+        SimpleNamespace(passed=False, for_agent=lambda: "main fails"),
+        SimpleNamespace(passed=False, for_agent=lambda: "main fails"),
+        SimpleNamespace(passed=True),
+    ])
+    stub = SimpleNamespace(
+        config=SimpleNamespace(fix_rounds=3), workspaces=workspaces, _agent=agent,
+        _flush_regressions=lambda: None, _port_mounts=lambda *_: {}, _log=lambda _: None,
+        _gate_full=lambda *_: next(gate_results), _target=lambda name: tmp_path / "targets" / name,
+    )
+    Porter._fix_until(stub, "x", lambda: next(verdicts), "Fix it.")
+
+    assert seen == ["one\n", "one\nfix\n"]
+    assert "needs a second fix" not in prompts[0]
+    assert "needs a second fix" in prompts[1]
+    assert (workspaces.repo / "a.txt").read_text() == "one\nfix\nfix\n"
 
 
 def test_non_conflicting_parallel_work_both_merge_after_rebasing(workspaces):
