@@ -28,6 +28,7 @@ To pass a callback, use `PythonExpression("lambda s: s.upper()")`, from `portwri
 - **Every API in the manifest.** The harness fails any API you never call, or that returns normally on under 10% of calls.
 - **Real logic.** Build inputs from what the code actually parses. Purely random text won't get past validation, so read the source and generate structured valid inputs first, then near-misses.
 - **Error paths**, with invalid types and values. Don't make every call fail, though: both versions raising the same early error tests nothing.
+- **Any Python string:** `st.text()` never generates lone surrogates. Use `text()` from `portwright.compare.strategies` wherever a string goes in, including mixed into structured inputs. It also adds characters that differ between Unicode versions.
 - **Traps:** empty values, boundaries, negative and huge integers, lone surrogates, non-ASCII text, NaN, -0.0, duplicate keys, and order.
 - **Defaults:** call with arguments omitted, not only supplied.
 

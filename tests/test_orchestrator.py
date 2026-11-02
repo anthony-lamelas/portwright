@@ -149,7 +149,7 @@ def test_killed_mid_module_resumes_with_state_intact(source):
         fake.porter(session)
         raise Killed
 
-    agents.behaviors["portwright"] = die_after_writing
+    agents.behaviors["porter"] = die_after_writing
     with pytest.raises(Killed):
         Porter(config, agents).run()
     board_path = Path(config.run_dir) / "control" / "board.json"

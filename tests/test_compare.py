@@ -180,3 +180,19 @@ def test_methods_on_objects_are_compared_on_both_sides(compare):
     pair = session.same("C")
     with pytest.raises(Divergence):
         pair.call("m")
+
+
+def test_text_strategy_produces_lone_surrogates():
+    from hypothesis import given, settings
+
+    from portwright.compare.strategies import text
+
+    found = []
+
+    @settings(max_examples=200, database=None)
+    @given(text())
+    def collect(value):
+        found.extend(c for c in value if 0xD800 <= ord(c) < 0xE000)
+
+    collect()
+    assert found, "st.text() hides lone surrogates, so this strategy must produce them"

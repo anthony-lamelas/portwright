@@ -28,7 +28,7 @@ from portwright.scaffold import crate_names, init_repo, write_scaffold
 from portwright.scheduler import BLOCKED, MERGED, RETRY, TaskBoard, Workspaces, run_board
 from portwright.state import JsonStore, RunPaths, append_capped, atomic_write
 
-PHASES = ["intake", "checks", "design", "port", "harden", "cleanup", "performance", "final_review", "report"]
+PHASES = ["intake", "checks", "design", "port", "harden", "fix_review", "cleanup", "performance", "final_review", "report"]
 LICENSE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "LICENCE", "COPYING")
 
 
@@ -46,7 +46,8 @@ class Config:
     url: str
     run_dir: Path
     # Starting values. The planted-bug minimum gets reset from the first real library.
-    canary_minimum: float = 0.7
+    # Set from the first real run: parse's checks caught 92% of planted bugs.
+    canary_minimum: float = 0.85
     canary_sample: int | None = 150
     canary_examples: int = 100
     coverage_minimum: float = 80.0
@@ -680,10 +681,42 @@ class Porter:
         shutil.rmtree(self._target(task), ignore_errors=True)
         return result
 
-    def _phase_cleanup(self) -> None:
-        # Shared Rust files were frozen so that parallel porters couldn't collide. Porting
-        # is over now, and workarounds for the freeze are exactly what cleanup should remove.
+    def _unfreeze_shared_code(self) -> None:
+        """Shared Rust files were frozen so parallel porters couldn't collide. Once porting
+        is over, fixes may need them, and workarounds for the freeze make worse code.
+        Fuzz targets stay frozen, so nobody can weaken them."""
         self.run_state.update(lambda d: d.update(shared={k: v for k, v in d["shared"].items() if not k.startswith("crates/")}))
+
+    def _phase_fix_review(self) -> None:
+        """Turn the reviewer's behavior findings into checks, then fix the Rust against them.
+
+        The Python still decides every expected answer, so a wrong finding can't make
+        the port worse: if the original agrees with the port, the new checks just pass.
+        """
+        review = self.paths.public / "review.md"
+        if not review.exists():
+            return
+        self._unfreeze_shared_code()
+        self._agent(
+            "test_writer", "review-checks",
+            "Stage: review findings. A reviewer read the Rust port and reported the problems below. For each "
+            "finding that claims the port *behaves* differently from the original (crashes, wrong results, "
+            "different errors, unsupported inputs), add inputs to /work/checks that reach it, so the comparison "
+            "catches it. Use explicit `@example`s for the reviewer's repros as well as generated inputs. Skip "
+            "findings about style or speed. Don't weaken or remove anything.\n\n" + review.read_text(encoding="utf-8"),
+            self._test_writer_mounts((str(self.paths.port), "/work/port:ro")),
+        )
+        self_check = self._record(
+            self_comparison_gate(self.paths.checks, self.reference, api=self.api, seed=self.config.seed, max_examples=self.config.examples),
+            "self_comparison_after_review",
+        )
+        if not self_check.passed:
+            raise RunStopped(f"the checks added for review findings don't agree with themselves: {self_check.summary}")
+        self._lock_checks()
+        self._fix_until("review", self._verify_main, "New checks reproduce problems a reviewer found. Fix the Rust so the port matches the original.")
+
+    def _phase_cleanup(self) -> None:
+        self._unfreeze_shared_code()
         before = count_rust_lines(self.paths.port)
         review = self.paths.public / "review.md"
         findings = review.read_text(encoding="utf-8") if review.exists() else "No review available."

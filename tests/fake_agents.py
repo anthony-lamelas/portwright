@@ -92,7 +92,7 @@ class FakeAgents:
             (fuzz / "Cargo.toml").write_text(FUZZ_MANIFEST)
             (fuzz / "fuzz_targets" / "slug.rs").write_text(FUZZ_TARGET)
             return
-        if "strengthen" in session.scratch.name:
+        if "strengthen" in session.scratch.name or "review" in session.scratch.name:
             return
         checks = mount(session, "/work/checks")
         shutil.copy(FIXTURES / "checks_good" / "test_textkit.py", checks / "test_textkit.py")
