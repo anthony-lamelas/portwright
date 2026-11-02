@@ -7,7 +7,7 @@ harness would report zero differences here even though no real logic ever ran.
 from hypothesis import given
 from hypothesis import strategies as st
 
-from porter.compare import same
+from portwright.compare import same
 
 
 @given(st.text())

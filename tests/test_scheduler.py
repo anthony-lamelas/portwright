@@ -5,8 +5,8 @@ import threading
 
 import pytest
 
-from porter.agents import LimitReached
-from porter.scheduler import BLOCKED, CLAIMED, MERGED, PENDING, RETRY, TaskBoard, Workspaces, run_board
+from portwright.agents import LimitReached
+from portwright.scheduler import BLOCKED, CLAIMED, MERGED, PENDING, RETRY, TaskBoard, Workspaces, run_board
 
 
 class Clock:

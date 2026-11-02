@@ -7,7 +7,7 @@ import re
 import tomllib
 from pathlib import Path
 
-from porter.gates import GateResult
+from portwright.gates import GateResult
 
 # Common building blocks. Anything else needs an approved request, which also blocks
 # pulling in an existing Rust port of the library being ported.

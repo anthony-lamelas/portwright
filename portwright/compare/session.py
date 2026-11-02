@@ -10,7 +10,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from porter.compare import worker as wire
+from portwright.compare import worker as wire
 
 WORKER_PATH = Path(wire.__file__).resolve()
 DEFAULT_TIMEOUT = 10.0

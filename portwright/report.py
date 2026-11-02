@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from porter.state import atomic_write
+from portwright.state import atomic_write
 
 REQUIRED_GATES = ["main_integrity", "main_rust_quality", "main_license", "main_build", "main_differential", "main_upstream_tests", "holdout_tests", "fuzz"]
 

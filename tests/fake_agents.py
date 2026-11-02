@@ -7,7 +7,7 @@ import re
 import shutil
 from pathlib import Path
 
-from porter.agents import AgentResult, AgentSession, LimitReached  # noqa: F401
+from portwright.agents import AgentResult, AgentSession, LimitReached  # noqa: F401
 
 FIXTURES = Path(__file__).parent / "fixtures"
 CORE = "textkit-port-core"

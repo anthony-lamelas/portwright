@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from porter.gates.license import write_attribution
+from portwright.gates.license import write_attribution
 
 
 def crate_names(lib: str) -> tuple[str, str]:
@@ -96,7 +96,7 @@ fn module_init(_module: &Bound<'_, PyModule>) -> PyResult<()> {{
 
 def init_repo(port: str | Path) -> None:
     port = Path(port)
-    identity = ["-c", "user.name=rust-porter", "-c", "user.email=rust-porter@users.noreply.github.com", "-c", "commit.gpgsign=false"]
+    identity = ["-c", "user.name=portwright", "-c", "user.email=portwright@users.noreply.github.com", "-c", "commit.gpgsign=false"]
     subprocess.run(["git", "init", "-q", "-b", "main", str(port)], check=True, capture_output=True)
     subprocess.run(["git", *identity, "add", "-A"], cwd=port, check=True, capture_output=True)
     subprocess.run(["git", *identity, "commit", "-qm", "Start port from scaffold"], cwd=port, check=True, capture_output=True)

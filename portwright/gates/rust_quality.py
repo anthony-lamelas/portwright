@@ -5,8 +5,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from porter.gates import GateResult
-from porter.toolchain import host_target_dir, in_sandbox, run_in_toolchain
+from portwright.gates import GateResult
+from portwright.toolchain import host_target_dir, in_sandbox, run_in_toolchain
 
 CLIPPY_RULES = [
     "-D", "warnings",

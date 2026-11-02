@@ -4,8 +4,8 @@ from hypothesis import given
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, rule
 
-from porter.compare import same
-from porter.compare.session import current
+from portwright.compare import same
+from portwright.compare.session import current
 
 TEXT = st.one_of(
     st.text(),

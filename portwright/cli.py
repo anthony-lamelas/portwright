@@ -9,12 +9,12 @@ import sys
 import time
 from pathlib import Path
 
-from porter.agents import DockerClaude, LimitReached
-from porter.auth import SUBSCRIPTION, Auth, AuthError
-from porter.orchestrator import Config, Porter
-from porter.sandbox import AllowlistProxy
-from porter.state import JsonStore
-from porter.toolchain import image_available
+from portwright.agents import DockerClaude, LimitReached
+from portwright.auth import SUBSCRIPTION, Auth, AuthError
+from portwright.orchestrator import Config, Porter
+from portwright.sandbox import AllowlistProxy
+from portwright.state import JsonStore
+from portwright.toolchain import image_available
 
 LIMIT_WAIT_SECONDS = 15 * 60
 
@@ -54,7 +54,7 @@ def command_run(options) -> int:
     except AuthError as error:
         sys.exit(str(error))
     if not image_available():
-        sys.exit("The toolchain image isn't built. Run: docker build --network host -t rust-porter-toolchain:dev -f docker/toolchain.Dockerfile docker")
+        sys.exit("The toolchain image isn't built. Run: docker build --network host -t portwright-toolchain:dev -f docker/toolchain.Dockerfile docker")
     config = _load_or_create_config(options)
     socket_path = Path(config.run_dir) / "build" / "proxy" / "p.sock"
     proxy = AllowlistProxy(socket_path)
@@ -92,7 +92,7 @@ def command_approve(options) -> int:
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(prog="porter", description=__doc__)
+    parser = argparse.ArgumentParser(prog="portwright", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
     run = commands.add_parser("run", help="start or resume a port")
     run.add_argument("--run-dir", required=True)

@@ -29,4 +29,4 @@ Every API in the prompt must appear in a task. Order tasks bottom-up so a task c
 - Check how the library depends on `re`, `datetime`, `decimal`, and similar modules. Note where Rust equivalents differ, because they're the likeliest source of mismatches.
 - The PyO3 layer may import only `datetime`, `decimal`, `fractions`, and `builtins` from Python, to build return types. It can't import `re` or the original library, because the logic must be Rust.
 
-Don't port everything yourself: leave the APIs to porters. `python -m porter.agent_check port SomeApi` shows whether the workspace builds.
+Don't port everything yourself: leave the APIs to porters. `python -m portwright.agent_check port SomeApi` shows whether the workspace builds.

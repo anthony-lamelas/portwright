@@ -3,8 +3,8 @@
 It's a preview. Its answer doesn't count: harness code reruns the gates outside the
 sandbox, with inputs the agent has never seen, before anything merges.
 
-    python -m porter.agent_check checks        # are the check files sound?
-    python -m porter.agent_check port [API...] # does the port match the original?
+    python -m portwright.agent_check checks        # are the check files sound?
+    python -m portwright.agent_check port [API...] # does the port match the original?
 """
 
 from __future__ import annotations
@@ -13,9 +13,9 @@ import json
 import sys
 from pathlib import Path
 
-from porter.evaluation import Project, verify
-from porter.gates.coverage import coverage_gate
-from porter.gates.differential import self_comparison_gate
+from portwright.evaluation import Project, verify
+from portwright.gates.coverage import coverage_gate
+from portwright.gates.differential import self_comparison_gate
 
 CONFIG = Path.home() / "porter.json"
 

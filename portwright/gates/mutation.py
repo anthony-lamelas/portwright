@@ -12,9 +12,9 @@ import shutil
 import subprocess
 from pathlib import Path
 
-from porter.gates import GateResult
-from porter.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
-from porter.toolchain import build_python_package, run_in_toolchain
+from portwright.gates import GateResult
+from portwright.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
+from portwright.toolchain import build_python_package, run_in_toolchain
 
 
 def list_rust_mutants(workspace, *, target_dir=None) -> list[dict]:

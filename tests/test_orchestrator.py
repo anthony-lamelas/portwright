@@ -16,10 +16,10 @@ from fake_agents import (
     regressing_cleanup,
     weak_checks_only,
 )
-from porter.agents import LimitReached
-from porter.orchestrator import Config, Porter
-from porter.report import verdict
-from porter.toolchain import image_available
+from portwright.agents import LimitReached
+from portwright.orchestrator import Config, Porter
+from portwright.report import verdict
+from portwright.toolchain import image_available
 
 FIXTURES = Path(__file__).parent / "fixtures"
 RUNS = Path(__file__).parent.parent / "target" / "orchestrator-tests"
@@ -149,7 +149,7 @@ def test_killed_mid_module_resumes_with_state_intact(source):
         fake.porter(session)
         raise Killed
 
-    agents.behaviors["porter"] = die_after_writing
+    agents.behaviors["portwright"] = die_after_writing
     with pytest.raises(Killed):
         Porter(config, agents).run()
     board_path = Path(config.run_dir) / "control" / "board.json"
@@ -196,7 +196,7 @@ def test_invalid_plan_is_rejected(source):
         from fake_agents import mount
 
         (mount(session, "/work/out") / "plan.json").write_text(json.dumps({"tasks": [{"id": "a", "apis": ["slug"]}]}))
-        return None or __import__("porter.agents", fromlist=["AgentResult"]).AgentResult("ok", "", {})
+        return None or __import__("portwright.agents", fromlist=["AgentResult"]).AgentResult("ok", "", {})
 
     agents = FakeAgents(behaviors={"planner": bad_plan})
     state = Porter(make_config(source, "badplan", design_rounds=1), agents).run()

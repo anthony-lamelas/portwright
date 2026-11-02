@@ -12,7 +12,7 @@ import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
-from porter.gates import GateResult
+from portwright.gates import GateResult
 
 MOCK_NAMES = {"mock", "Mock", "MagicMock", "patch", "monkeypatch"}
 

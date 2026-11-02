@@ -12,8 +12,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
-from porter.auth import Auth
-from porter.toolchain import IMAGE
+from portwright.auth import Auth
+from portwright.toolchain import IMAGE
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPTS = REPO_ROOT / "prompts"
@@ -107,7 +107,7 @@ class DockerClaude:
             "-v", f"{home.resolve()}:/home/agent",
             "-v", f"{SKILLS.resolve()}:/home/agent/.claude/skills:ro",
             "-v", f"{self.proxy_socket.parent}:/proxy",
-            "-v", f"{REPO_ROOT}/porter:/harness/porter:ro",
+            "-v", f"{REPO_ROOT}/portwright:/harness/portwright:ro",
             "-e", "HOME=/home/agent",
             "-e", "HTTPS_PROXY=http://127.0.0.1:3128",
             "-e", "PORTER_IN_SANDBOX=1",
@@ -135,7 +135,7 @@ class DockerClaude:
         ]
         if session.model:
             claude += ["--model", session.model]
-        script = "python3 /harness/porter/sandbox_forward.py & exec " + " ".join(claude)
+        script = "python3 /harness/portwright/sandbox_forward.py & exec " + " ".join(claude)
         return [*docker, self.image, "bash", "-c", script]
 
     def run(self, session: AgentSession) -> AgentResult:

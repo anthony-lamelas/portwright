@@ -8,9 +8,9 @@ from pathlib import Path
 
 import coverage as coverage_api
 
-from porter.gates import GateResult
-from porter.gates.differential import REPO_ROOT, run_checks
-from porter.toolchain import run_in_toolchain
+from portwright.gates import GateResult
+from portwright.gates.differential import REPO_ROOT, run_checks
+from portwright.toolchain import run_in_toolchain
 
 
 def coverage_gate(checks_dir, side: dict, *, minimum: float = 80.0, seed: int = 0, max_examples: int = 200) -> GateResult:
@@ -60,7 +60,7 @@ cat > /tmp/config.json <<'JSON'
 {config}
 JSON
 cd /tmp
-PORTER_CONFIG=/tmp/config.json PYTHONPATH=/harness python -m pytest /checks -p porter.compare.pytest_plugin \
+PORTER_CONFIG=/tmp/config.json PYTHONPATH=/harness python -m pytest /checks -p portwright.compare.pytest_plugin \
   -p no:cacheprovider --rootdir /checks -c /dev/null -q --hypothesis-seed=0 > /tmp/pytest.log 2>&1 || true
 cd /work
 cargo llvm-cov report --json --summary-only --release --output-path /work/target/rust-coverage.json \

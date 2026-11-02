@@ -15,8 +15,8 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
-from porter.gates import GateResult
-from porter.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
+from portwright.gates import GateResult
+from portwright.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
 
 _COMPARE_SWAPS = {
     ast.Lt: ast.LtE, ast.LtE: ast.Lt, ast.Gt: ast.GtE, ast.GtE: ast.Gt,
@@ -167,7 +167,7 @@ def build_mutant(source_dir: str | Path, mutant: Mutant, target_dir: str | Path)
 
 
 def _run_one(mutant, source_dir, checks_dir, module, python, seed, max_examples, timeout):
-    with tempfile.TemporaryDirectory(prefix="porter-mutant-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="portwright-mutant-") as scratch:
         build_mutant(source_dir, mutant, scratch)
         reference = {"path": str(source_dir), "module": module, "python": python}
         candidate = {"path": scratch, "module": module, "python": python}

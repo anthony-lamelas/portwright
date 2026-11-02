@@ -7,15 +7,15 @@ from pathlib import Path
 
 import pytest
 
-from porter.gates.bench import load_benchmarks, performance_gate, run_benchmarks, speedups
-from porter.gates.coverage import coverage_gate, rust_coverage
-from porter.gates.fuzz import fuzz_gate
-from porter.gates.integrity import hash_tree, integrity_gate
-from porter.gates.license import is_permissive, license_gate, write_attribution
-from porter.gates.mutation import mutation_gate
-from porter.gates.rust_quality import count_rust_lines, rust_quality_gate
-from porter.gates.upstream_tests import private_test_names, strip_holdouts, upstream_gate
-from porter.toolchain import build_python_package, image_available
+from portwright.gates.bench import load_benchmarks, performance_gate, run_benchmarks, speedups
+from portwright.gates.coverage import coverage_gate, rust_coverage
+from portwright.gates.fuzz import fuzz_gate
+from portwright.gates.integrity import hash_tree, integrity_gate
+from portwright.gates.license import is_permissive, license_gate, write_attribution
+from portwright.gates.mutation import mutation_gate
+from portwright.gates.rust_quality import count_rust_lines, rust_quality_gate
+from portwright.gates.upstream_tests import private_test_names, strip_holdouts, upstream_gate
+from portwright.toolchain import build_python_package, image_available
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TEXTKIT = FIXTURES / "textkit"

@@ -1,4 +1,4 @@
-# Working in the rust-porter harness
+# Working in the portwright harness
 
 You're one of several agents porting a Python library to Rust. The Python library is the specification: its behavior, quirks, and bugs are what the port must match.
 

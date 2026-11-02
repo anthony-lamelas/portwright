@@ -4,7 +4,7 @@ import textwrap
 
 import pytest
 
-from porter.compare.session import Divergence, Session, Side, WorkerStartError
+from portwright.compare.session import Divergence, Session, Side, WorkerStartError
 
 
 def make_library(directory, body):

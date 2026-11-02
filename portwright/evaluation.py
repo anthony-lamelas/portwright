@@ -6,13 +6,13 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from porter.gates import GateResult
-from porter.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
-from porter.gates.integrity import hash_tree, integrity_gate
-from porter.gates.license import license_gate
-from porter.gates.rust_quality import rust_quality_gate
-from porter.gates.upstream_tests import upstream_gate
-from porter.toolchain import build_python_package
+from portwright.gates import GateResult
+from portwright.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
+from portwright.gates.integrity import hash_tree, integrity_gate
+from portwright.gates.license import license_gate
+from portwright.gates.rust_quality import rust_quality_gate
+from portwright.gates.upstream_tests import upstream_gate
+from portwright.toolchain import build_python_package
 
 MAX_EXAMPLES_SHOWN = 8
 AGENT_TEXT_LIMIT = 8000
@@ -201,8 +201,8 @@ from pathlib import Path
 
 import pytest
 
-from porter.compare import same
-from porter.compare.worker import Handles, decode
+from portwright.compare import same
+from portwright.compare.worker import Handles, decode
 
 CASES_PATH = Path(__file__).with_name("regressions.json")
 CASES = json.loads(CASES_PATH.read_text()) if CASES_PATH.exists() else []

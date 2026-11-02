@@ -13,7 +13,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-IMAGE = "rust-porter-toolchain:dev"
+IMAGE = "portwright-toolchain:dev"
 
 
 def in_sandbox() -> bool:
@@ -65,7 +65,7 @@ def run_in_toolchain(
     for key, value in (env or {}).items():
         docker += ["-e", f"{key}={value}"]
     # This machine's default Docker bridge has no outbound access, so trusted build
-    # steps use the host network. Agent sandboxes never do: see porter/sandbox.py.
+    # steps use the host network. Agent sandboxes never do: see portwright/sandbox.py.
     docker += ["--network", "host" if network else "none"]
     for host_path, container_path in (extra_mounts or {}).items():
         docker += ["-v", f"{Path(host_path).resolve()}:{container_path}"]

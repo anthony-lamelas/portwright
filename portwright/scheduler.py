@@ -16,8 +16,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import dataclass
 from pathlib import Path
 
-from porter.agents import LimitReached
-from porter.state import JsonStore
+from portwright.agents import LimitReached
+from portwright.state import JsonStore
 
 PENDING = "pending"
 CLAIMED = "claimed"
@@ -162,7 +162,7 @@ class Workspaces:
 
     def _git(self, *args, cwd=None, check=True) -> subprocess.CompletedProcess:
         return subprocess.run(
-            ["git", "-c", "user.name=rust-porter", "-c", "user.email=rust-porter@users.noreply.github.com",
+            ["git", "-c", "user.name=portwright", "-c", "user.email=portwright@users.noreply.github.com",
              "-c", "commit.gpgsign=false", *args],
             cwd=cwd or self.repo, capture_output=True, text=True, check=check,
         )

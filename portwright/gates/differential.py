@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from porter.gates import GateResult
+from portwright.gates import GateResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 # An API counts as tested only if the reference returned normally on at least this
@@ -46,7 +46,7 @@ def run_checks(
     checks_dir = Path(checks_dir).resolve()
     reference = {**reference, "path": str(Path(reference["path"]).resolve())}
     candidate = {**candidate, "path": str(Path(candidate["path"]).resolve())}
-    with tempfile.TemporaryDirectory(prefix="porter-checks-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="portwright-checks-") as scratch:
         results = Path(scratch) / "results.json"
         config = Path(scratch) / "config.json"
         config.write_text(
@@ -62,7 +62,7 @@ def run_checks(
         )
         command = [
             sys.executable, "-m", "pytest", str(checks_dir),
-            "-p", "porter.compare.pytest_plugin",
+            "-p", "portwright.compare.pytest_plugin",
             "-p", "no:cacheprovider",
             "--rootdir", str(checks_dir),
             "-c", os.devnull,

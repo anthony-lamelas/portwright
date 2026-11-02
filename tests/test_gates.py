@@ -5,9 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from porter.gates.canaries import build_mutant, canary_gate, list_mutants
-from porter.gates.differential import differential_gate, self_comparison_gate
-from porter.manifest import extract_api
+from portwright.gates.canaries import build_mutant, canary_gate, list_mutants
+from portwright.gates.differential import differential_gate, self_comparison_gate
+from portwright.manifest import extract_api
 
 FIXTURES = Path(__file__).parent / "fixtures"
 TEXTKIT = FIXTURES / "textkit"

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from porter.gates import GateResult
-from porter.toolchain import run_in_toolchain
+from portwright.gates import GateResult
+from portwright.toolchain import run_in_toolchain
 
 
 def list_fuzz_targets(workspace) -> list[str]:

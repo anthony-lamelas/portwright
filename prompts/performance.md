@@ -10,4 +10,4 @@ Measure before you change anything. Keep or add Criterion benchmarks in the core
 
 Release the GIL with `py.detach` around long pure-Rust work, but don't add concurrency just to look fast. Keep `unsafe` out of the core, because speed never justifies it here.
 
-Run `python -m porter.agent_check port` before you finish. If you find no real gain, make no change and say so: an honest "this is about as fast as it gets" is a useful result.
+Run `python -m portwright.agent_check port` before you finish. If you find no real gain, make no change and say so: an honest "this is about as fast as it gets" is a useful result.

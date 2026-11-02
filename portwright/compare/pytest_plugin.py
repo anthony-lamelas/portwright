@@ -8,7 +8,7 @@ from pathlib import Path
 
 from hypothesis import HealthCheck, settings
 
-from porter.compare import session as session_module
+from portwright.compare import session as session_module
 
 FAILURE_TEXT_LIMIT = 4000
 

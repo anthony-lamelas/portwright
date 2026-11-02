@@ -9,10 +9,10 @@ from pathlib import Path
 
 import pytest
 
-from porter.agents import AgentSession, DockerClaude, parse_result
-from porter.auth import API_KEY, SUBSCRIPTION, Auth, AuthError
-from porter.sandbox import AllowlistProxy, is_allowed
-from porter.toolchain import IMAGE, image_available
+from portwright.agents import AgentSession, DockerClaude, parse_result
+from portwright.auth import API_KEY, SUBSCRIPTION, Auth, AuthError
+from portwright.sandbox import AllowlistProxy, is_allowed
+from portwright.toolchain import IMAGE, image_available
 
 REPO_TARGET = Path(__file__).parent.parent / "target" / "sandbox-tests"
 docker = pytest.mark.skipif(not image_available(), reason="toolchain image not built")
@@ -114,11 +114,11 @@ def test_container_has_no_network_except_the_proxy():
         command = backend.command(session, (REPO_TARGET / "home"), {}, f"porter-test-{os.getpid()}")
         (REPO_TARGET / "home").mkdir(exist_ok=True)
         probe = (
-            "python3 /harness/porter/sandbox_forward.py & sleep 1; "
+            "python3 /harness/portwright/sandbox_forward.py & sleep 1; "
             "curl -sS -m 5 -o /dev/null -w 'direct:%{http_code}\\n' --noproxy '*' https://1.1.1.1 2>&1 | tail -1; "
             "curl -sS -m 8 -o /dev/null -w 'blocked:%{http_code}\\n' https://github.com 2>&1 | tail -1; "
             "curl -sS -m 15 -o /dev/null -w 'crates:%{http_code}\\n' https://index.crates.io/config.json 2>&1 | tail -1; "
-            "touch /harness/porter/x 2>&1 | tail -1; "
+            "touch /harness/portwright/x 2>&1 | tail -1; "
             "ls -a /home/agent/.claude | grep -c credentials"
         )
         done = subprocess.run([*command[:-1], probe], capture_output=True, text=True, timeout=90, check=False)

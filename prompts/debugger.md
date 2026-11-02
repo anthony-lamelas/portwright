@@ -4,7 +4,7 @@ Earlier attempts failed, or a harder test found a difference. Your job is to **f
 
 ## Steps
 
-1. Reproduce the failure. Call both versions directly: the original is at `/work/upstream/src`, and `python -m porter.agent_check port` builds the port into `/tmp/porter-site`.
+1. Reproduce the failure. Call both versions directly: the original is at `/work/upstream/src`, and `python -m portwright.agent_check port` builds the port into `/tmp/porter-site`.
 2. Trace both sides on the smallest failing input until you can say exactly where they first diverge, and why. Read the Python source for that path, including the standard library behavior it relies on.
 3. Read `/work/state/tried` so you don't repeat a failed approach.
 4. Fix the general cause. Ask what other inputs share it, and test those too.

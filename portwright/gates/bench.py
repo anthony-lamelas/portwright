@@ -9,10 +9,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from porter.compare import worker as wire
-from porter.compare.session import Side, Worker
-from porter.gates import GateResult
-from porter.toolchain import host_target_dir, run_in_toolchain
+from portwright.compare import worker as wire
+from portwright.compare.session import Side, Worker
+from portwright.gates import GateResult
+from portwright.toolchain import host_target_dir, run_in_toolchain
 
 # Changes smaller than this are treated as noise.
 NOISE = 0.05

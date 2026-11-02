@@ -10,7 +10,7 @@ Write pytest files in `/work/checks`, using Hypothesis:
 
 ```python
 from hypothesis import given, strategies as st
-from porter.compare import same, get
+from portwright.compare import same, get
 
 @given(st.text(), st.integers(min_value=0, max_value=50))
 def test_truncate(text, width):
@@ -39,7 +39,7 @@ Write `/work/checks/benchmarks.json`: 3 to 10 realistic workloads.
 
 ## Checking your work
 
-Run `python -m porter.agent_check checks` until it passes. Afterward the harness plants bugs in copies of the Python and tells you which ones your checks missed. Some planted changes can't alter behavior; explain those in `/work/out/tried.md`.
+Run `python -m portwright.agent_check checks` until it passes. Afterward the harness plants bugs in copies of the Python and tells you which ones your checks missed. Some planted changes can't alter behavior; explain those in `/work/out/tried.md`.
 
 ## Other stages
 

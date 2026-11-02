@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from porter.gates import GateResult
-from porter.toolchain import host_target_dir, in_sandbox, run_in_toolchain
+from portwright.gates import GateResult
+from portwright.toolchain import host_target_dir, in_sandbox, run_in_toolchain
 
 ALLOWED = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception","BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "MIT-0", "BSL-1.0", "Unlicense", "CC0-1.0"]
 PERMISSIVE_MARKERS = (

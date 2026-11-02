@@ -9,24 +9,24 @@ import time
 from dataclasses import dataclass
 from pathlib import Path
 
-from porter.agents import AgentResult, AgentSession, Backend, LimitReached
-from porter.evaluation import Project, Verification, add_regressions, differential_for, verify
-from porter.gates import GateResult
-from porter.gates.bench import load_benchmarks, performance_gate, run_benchmarks, run_native_benchmarks, speedups
-from porter.gates.canaries import canary_gate
-from porter.gates.coverage import coverage_gate, rust_coverage
-from porter.gates.differential import self_comparison_gate
-from porter.gates.fuzz import fuzz_gate
-from porter.gates.integrity import hash_tree
-from porter.gates.license import is_permissive
-from porter.gates.mutation import mutation_gate
-from porter.gates.rust_quality import count_rust_lines
-from porter.gates.upstream_tests import strip_holdouts, upstream_gate
-from porter.manifest import extract_api
-from porter.report import write_report
-from porter.scaffold import crate_names, init_repo, write_scaffold
-from porter.scheduler import BLOCKED, MERGED, RETRY, TaskBoard, Workspaces, run_board
-from porter.state import JsonStore, RunPaths, append_capped, atomic_write
+from portwright.agents import AgentResult, AgentSession, Backend, LimitReached
+from portwright.evaluation import Project, Verification, add_regressions, differential_for, verify
+from portwright.gates import GateResult
+from portwright.gates.bench import load_benchmarks, performance_gate, run_benchmarks, run_native_benchmarks, speedups
+from portwright.gates.canaries import canary_gate
+from portwright.gates.coverage import coverage_gate, rust_coverage
+from portwright.gates.differential import self_comparison_gate
+from portwright.gates.fuzz import fuzz_gate
+from portwright.gates.integrity import hash_tree
+from portwright.gates.license import is_permissive
+from portwright.gates.mutation import mutation_gate
+from portwright.gates.rust_quality import count_rust_lines
+from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
+from portwright.manifest import extract_api
+from portwright.report import write_report
+from portwright.scaffold import crate_names, init_repo, write_scaffold
+from portwright.scheduler import BLOCKED, MERGED, RETRY, TaskBoard, Workspaces, run_board
+from portwright.state import JsonStore, RunPaths, append_capped, atomic_write
 
 PHASES = ["intake", "checks", "design", "port", "harden", "cleanup", "performance", "final_review", "report"]
 LICENSE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "LICENCE", "COPYING")
@@ -416,7 +416,7 @@ class Porter:
         tried = self.paths.public / "tried" / f"{task_id}.md"
         if tried.exists():
             parts.append(f"Approaches already tried:\n{tried.read_text(encoding='utf-8')}")
-        parts.append(f"Check your work with: python -m porter.agent_check port {' '.join(task['apis'])}")
+        parts.append(f"Check your work with: python -m portwright.agent_check port {' '.join(task['apis'])}")
         return "\n\n".join(parts)
 
     def _handle_requests(self) -> str:
@@ -516,7 +516,7 @@ class Porter:
             self._flush_regressions()
             task = f"fix-{name}-{round_number}"
             workspace = self.workspaces.create(task)
-            prompt = f"{intro}\n\nThe harness found:\n{verdict.for_agent()}\n\nCheck your work with: python -m porter.agent_check port"
+            prompt = f"{intro}\n\nThe harness found:\n{verdict.for_agent()}\n\nCheck your work with: python -m portwright.agent_check port"
             self._agent("debugger", task, prompt, self._port_mounts(workspace, task))
             self.workspaces.commit(workspace, f"debugger: {task}")
             merged = self.workspaces.merge(task, workspace, lambda path: self._gate_full(path, task))
@@ -586,7 +586,7 @@ class Porter:
                 text = "\n\n".join(problems)
                 task = f"fix-harden-{cycle}"
                 workspace = self.workspaces.create(task)
-                self._agent("debugger", task, f"{text}\n\nCheck your work with: python -m porter.agent_check port", self._port_mounts(workspace, task))
+                self._agent("debugger", task, f"{text}\n\nCheck your work with: python -m portwright.agent_check port", self._port_mounts(workspace, task))
                 self.workspaces.commit(workspace, f"debugger: {task}")
                 self.workspaces.merge(task, workspace, lambda path: self._gate_full(path, task))
                 self.workspaces.discard(task)
@@ -673,7 +673,7 @@ class Porter:
             after = count_rust_lines(path)
             passed = after <= before * 1.05
             return GateResult("cleanup", passed, f"Rust lines went from {before} to {after} (5% growth allowed)", {"before": before, "after": after})
-        prompt = f"Make the Rust simpler and more idiomatic without changing behavior.\n\nReviewer's findings:\n{findings}\n\nCheck your work with: python -m porter.agent_check port"
+        prompt = f"Make the Rust simpler and more idiomatic without changing behavior.\n\nReviewer's findings:\n{findings}\n\nCheck your work with: python -m portwright.agent_check port"
         self._record(self._try_change("cleanup", "cleanup", prompt, simpler))
 
     def _phase_performance(self) -> None:
@@ -691,7 +691,7 @@ class Porter:
                 f"Benchmarks through Python are in /work/checks/benchmarks.json. Current nanoseconds per call:\n"
                 f"{json.dumps({k: v.get('median_ns') for k, v in baseline.items()}, indent=1)}\n"
                 f"Also keep Criterion benchmarks in crates/{self.core_crate}/benches.\n"
-                "Check your work with: python -m porter.agent_check port"
+                "Check your work with: python -m portwright.agent_check port"
             )
 
             def faster(_path: Path, candidate: Verification) -> GateResult:
