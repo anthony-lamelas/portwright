@@ -1,0 +1,10 @@
+[
+ {"name": "simple_parse", "target": "parse", "args": ["hello {name}, you are {age:d}", "hello Bob, you are 42"], "kwargs": {}},
+ {"name": "numeric_mix", "target": "parse", "args": ["{:f} {:e} {:g} {:x} {:n} {:%}", "3.14 1.5e10 2.5 ff 1,234,567 50%"], "kwargs": {}},
+ {"name": "iso_datetime", "target": "parse", "args": ["at {when:ti} level={lvl:w}", "at 2023-11-21T13:23:27.123+05:30 level=INFO"], "kwargs": {}},
+ {"name": "strftime_field", "target": "parse", "args": ["{dt:%Y-%m-%d %H:%M:%S}", "2023-11-21 13:23:27"], "kwargs": {}},
+ {"name": "search_log", "target": "search", "args": ["took {ms:d}ms", "GET /index.html 200 OK took 1532ms from 10.0.0.1 agent=curl"], "kwargs": {}},
+ {"name": "findall_numbers", "target": "findall", "args": ["<{:d}>", "<1> <22> <333> <4444> <55555> <6> <77> <888> <9999> <0>"], "kwargs": {}},
+ {"name": "compile_complex", "target": "compile", "args": ["{a.b:>10d} {c[d]:^8} {e:tg} {:%H:%M} {f:.3f}"], "kwargs": {}},
+ {"name": "apache_log", "target": "parse", "args": ["{ip} - - [{ts:th}] \"{method} {path} HTTP/{ver}\" {status:d} {size:d}", "127.0.0.1 - - [21/Nov/2011:10:21:36 +1000] \"GET /a/b HTTP/1.1\" 200 5123"], "kwargs": {}}
+]

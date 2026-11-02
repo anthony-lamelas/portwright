@@ -1,0 +1,17 @@
+[package]
+name = "parse-port-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Python bindings for the experimental, unofficial Rust port of parse."
+
+[lib]
+name = "parse"
+crate-type = ["cdylib"]
+
+[dependencies]
+indexmap = "2"
+num-bigint = "0.4"
+parse-port-core = { path = "../parse-port-core" }
+pyo3 = { version = "0.29", features = ["extension-module", "num-bigint"] }

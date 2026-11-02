@@ -1,0 +1,98 @@
+[package]
+name = "parse-port-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+indexmap = "2"
+parse-port-core = { path = "../crates/parse-port-core" }
+
+# Keep this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "parser"
+path = "fuzz_targets/parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "extract_format"
+path = "fuzz_targets/extract_format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "percent_format"
+path = "fuzz_targets/percent_format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "regex"
+path = "fuzz_targets/regex.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_format"
+path = "fuzz_targets/datetime_format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strptime"
+path = "fuzz_targets/strptime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strf_date_convert"
+path = "fuzz_targets/strf_date_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "int_convert"
+path = "fuzz_targets/int_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "percentage"
+path = "fuzz_targets/percentage.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_convert"
+path = "fuzz_targets/date_convert.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "pystr_numbers"
+path = "fuzz_targets/pystr_numbers.rs"
+test = false
+doc = false
+bench = false
