@@ -490,6 +490,7 @@ class Porter:
         self._lock_checks()
 
     def _phase_port(self) -> None:
+        self.board.release_all()  # claims left by a run that crashed or was killed
         run_board(self.board, self._work_task, max_agents=self.config.max_agents, on_error=lambda t, e: self._log(f"  harness error in {t}: {e}"))
         self._flush_regressions()
         unfinished = self.board.unfinished()

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -114,6 +115,8 @@ def _shared_problems(workspace: Path, shared: dict) -> list[str]:
         path = workspace / root
         if path.is_dir():
             current.update({f"{root}/{key}": value for key, value in hash_tree(path).items() if not key.startswith("target/")})
+        elif path.is_file():  # a frozen top-level file such as Cargo.toml
+            current[root] = hashlib.sha256(path.read_bytes()).hexdigest()
     for name, expected in shared.items():
         if current.get(name) != expected:
             problems.append(f"{name} is frozen and can't be changed; file a request instead")

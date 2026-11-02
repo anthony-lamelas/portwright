@@ -87,6 +87,17 @@ def parse_result(stdout: str, returncode: int) -> AgentResult:
     return AgentResult("ok", text, usage)
 
 
+def memory_limit(share: float = 0.3, ceiling_gb: int = 16) -> str:
+    """Memory for one agent container: a share of this machine's RAM, so two agents
+    plus the host's own gate runs can't exhaust it. A fixed 16g did nothing on a 15 GB machine."""
+    try:
+        with open("/proc/meminfo") as meminfo:
+            total_kb = next(int(line.split()[1]) for line in meminfo if line.startswith("MemTotal:"))
+    except (OSError, StopIteration, ValueError):
+        return f"{ceiling_gb}g"
+    return f"{max(2048, min(ceiling_gb * 1024, int(total_kb / 1024 * share)))}m"
+
+
 def stop_container(name: str) -> None:
     """Stop a container. Snap Docker can deny ``docker kill``, so fall back to its process."""
     if subprocess.run(["docker", "kill", name], capture_output=True, check=False).returncode == 0:
@@ -118,7 +129,7 @@ class DockerClaude:
             # no-new-privileges would be better, but snap Docker refuses to start with it.
             # The container still runs as a non-root user with no capabilities.
             "--cap-drop", "ALL",
-            "--memory", "16g", "--pids-limit", "4096",
+            "--memory", memory_limit(), "--memory-swap", memory_limit(), "--pids-limit", "4096",
             "-v", f"{home.resolve()}:/home/agent",
             "-v", f"{SKILLS.resolve()}:/home/agent/.claude/skills:ro",
             "-v", f"{self.proxy_socket.parent}:/proxy",

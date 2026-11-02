@@ -301,3 +301,20 @@ def test_clean_build_output_after_gates(rust_workspace):
     built = build_python_package(rust_workspace, "crates/textkit-py", site)
     assert built.returncode == 0, built.stderr[-1000:]
     assert list(site.rglob("*.so"))
+
+
+def test_frozen_top_level_files_are_compared_not_always_flagged(tmp_path):
+    import hashlib
+
+    from portwright.evaluation import _shared_problems
+
+    (tmp_path / "Cargo.toml").write_text("[workspace]\n")
+    (tmp_path / "crates").mkdir()
+    (tmp_path / "crates" / "lib.rs").write_text("// shared\n")
+    shared = {
+        "Cargo.toml": hashlib.sha256(b"[workspace]\n").hexdigest(),
+        "crates/lib.rs": hashlib.sha256(b"// shared\n").hexdigest(),
+    }
+    assert _shared_problems(tmp_path, shared) == []
+    (tmp_path / "Cargo.toml").write_text("[workspace]\nmembers = []\n")
+    assert _shared_problems(tmp_path, shared) == ["Cargo.toml is frozen and can't be changed; file a request instead"]

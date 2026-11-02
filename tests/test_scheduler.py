@@ -264,3 +264,12 @@ def test_resume_keeps_existing_worktree_contents(workspaces):
     (path / "work.txt").write_text("partial")
     again = workspaces.create("t1")
     assert (again / "work.txt").read_text() == "partial"
+
+
+def test_a_resumed_run_frees_claims_left_by_a_dead_run(tmp_path):
+    board = TaskBoard(tmp_path / "board.json")
+    board.add("a", ["f"])
+    assert board.claim("a", "dead-worker")
+    assert board.ready() == []  # still held for the whole lease
+    board.release_all()
+    assert board.ready() == ["a"]

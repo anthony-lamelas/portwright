@@ -102,6 +102,16 @@ class TaskBoard:
                 task["claim"] = None
         self.store.update(change)
 
+    def release_all(self) -> None:
+        """Free every claim. Only one orchestrator runs per run, so at startup any claim
+        belongs to a run that died, and waiting out its lease would stall the resume."""
+        def change(data):
+            for task in data["tasks"].values():
+                if task["status"] == CLAIMED:
+                    task["status"] = PENDING
+                    task["claim"] = None
+        self.store.update(change)
+
     def unfinished(self) -> dict:
         return {k: v for k, v in self.tasks().items() if v["status"] != MERGED}
 
