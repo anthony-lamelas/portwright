@@ -196,3 +196,14 @@ def test_text_strategy_produces_lone_surrogates():
 
     collect()
     assert found, "st.text() hides lone surrogates, so this strategy must produce them"
+
+
+def test_replayed_regressions_keep_callbacks_as_expressions(compare):
+    """Saved inputs can name the library, which only a worker can import."""
+    from portwright.compare.worker import Handles, decode, encode
+
+    saved = encode({"f": PythonExpression("__import__('lib').g")})
+    value = decode(saved, Handles(), evaluate=False)
+    assert isinstance(value["f"], PythonExpression)
+    session = compare("def g(): return 1\ndef f(x): return x['f']()", "def g(): return 1\ndef f(x): return x['f']()")
+    session.same("f", value)

@@ -68,9 +68,21 @@ def encode(value):
     raise TypeError(f"can't send {kind.__name__} to a worker")
 
 
-def decode(data, handles):
-    """Rebuild an input value from ``encode``."""
+def decode(data, handles, evaluate=True):
+    """Rebuild an input value from ``encode``.
+
+    With ``evaluate=False``, Python expressions come back as ``PythonExpression``
+    so they can be sent on to the workers. Check files use that, because the
+    library being tested can only be imported inside a worker.
+    """
     tag, value = data["t"], data.get("v")
+    if tag in ("list", "tuple", "set", "frozenset", "dict"):
+        inner = lambda item: decode(item, handles, evaluate)  # noqa: E731
+        if tag == "dict":
+            return {inner(k): inner(v) for k, v in value}
+        return {"list": list, "tuple": tuple, "set": set, "frozenset": frozenset}[tag](inner(item) for item in value)
+    if tag == "python" and not evaluate:
+        return PythonExpression(value)
     if tag == "none":
         return None
     if tag == "bool":

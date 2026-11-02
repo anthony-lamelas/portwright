@@ -12,7 +12,8 @@ RUN pip install --no-cache-dir "maturin>=1.7,<2"
 RUN cargo install --locked cargo-nextest cargo-llvm-cov cargo-mutants cargo-deny cargo-fuzz \
     && rm -rf /opt/cargo/registry /opt/cargo/git
 RUN chmod -R a+rwX /opt/cargo /opt/rustup
-RUN pip install --no-cache-dir "pytest>=8" "hypothesis>=6.100" "coverage>=7.5"
+# freezegun: a test dependency of ported libraries (humanize).
+RUN pip install --no-cache-dir "pytest>=8" "hypothesis>=6.100" "coverage>=7.5" "freezegun>=1.5"
 # Claude Code for agent sandboxes, pinned so runs are repeatable.
 RUN HOME=/opt/claude bash -c 'mkdir -p $HOME && curl -fsSL https://claude.ai/install.sh | bash -s 2.1.316' \
     && ln -s /opt/claude/.local/bin/claude /usr/local/bin/claude \

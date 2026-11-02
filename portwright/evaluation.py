@@ -189,7 +189,7 @@ def add_regressions(checks: str | Path, divergences: dict) -> int:
     if added:
         path.write_text(json.dumps(existing, indent=1))
     runner = Path(checks) / "test_porter_regressions.py"
-    if not runner.exists():
+    if not runner.exists() or runner.read_text() != REGRESSION_RUNNER:  # harness-owned, so keep it current
         runner.write_text(REGRESSION_RUNNER)
     return added
 
@@ -211,7 +211,8 @@ CASES = json.loads(CASES_PATH.read_text()) if CASES_PATH.exists() else []
 @pytest.mark.parametrize("case", CASES)
 def test_regression(case):
     handles = Handles()
-    args = [decode(item, handles) for item in case["args"]]
-    kwargs = {key: decode(item, handles) for key, item in case["kwargs"].items()}
+    # Callbacks stay as expressions: each worker evaluates them with its own library.
+    args = [decode(item, handles, evaluate=False) for item in case["args"]]
+    kwargs = {key: decode(item, handles, evaluate=False) for key, item in case["kwargs"].items()}
     same(case["target"], *args, **kwargs)
 '''
