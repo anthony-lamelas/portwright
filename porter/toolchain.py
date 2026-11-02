@@ -59,7 +59,9 @@ def run_in_toolchain(
     ]
     if target_dir is not None:
         Path(target_dir).mkdir(parents=True, exist_ok=True)
-        docker += ["-v", f"{Path(target_dir).resolve()}:/work/target"]
+        # Docker would otherwise create this mount point as root.
+        (workspace / "target").mkdir(exist_ok=True)
+        docker +=["-v", f"{Path(target_dir).resolve()}:/work/target"]
     for key, value in (env or {}).items():
         docker += ["-e", f"{key}={value}"]
     # This machine's default Docker bridge has no outbound access, so trusted build

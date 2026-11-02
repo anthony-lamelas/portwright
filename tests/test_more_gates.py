@@ -156,6 +156,12 @@ def test_integrity_rejects_unapproved_crates_unless_approved(tmp_path):
     assert check_integrity(port, approved_crates={"textkit-existing-port"}).passed
 
 
+def test_integrity_reports_a_malformed_manifest_instead_of_crashing(tmp_path):
+    port = make_port(tmp_path)
+    (port / "crates/textkit-core/Cargo.toml").write_text('[dependencies]\na = "1"\na = "2"\n')
+    assert "invalid TOML" in str(check_integrity(port).details["problems"])
+
+
 def test_integrity_rejects_edited_or_added_check_files(tmp_path):
     port = make_port(tmp_path)
     checks = tmp_path / "checks"

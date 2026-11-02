@@ -88,7 +88,11 @@ def integrity_gate(
         relative = path.relative_to(workspace)
         if "fuzz" in relative.parts:
             continue
-        manifest = tomllib.loads(path.read_text(encoding="utf-8"))
+        try:
+            manifest = tomllib.loads(path.read_text(encoding="utf-8"))
+        except tomllib.TOMLDecodeError as error:
+            problems.append(f"{relative}: invalid TOML: {error}")
+            continue
         dependencies = _dependencies(manifest)
         for crate in sorted(dependencies - allowed_crates):
             problems.append(f"{relative}: crate {crate} isn't approved")
