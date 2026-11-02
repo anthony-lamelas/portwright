@@ -251,7 +251,8 @@ class Porter:
             if path.exists():
                 shutil.rmtree(path)
         package = source / config.package_path
-        destination = self.paths.upstream_src / config.package_path
+        # A src/ layout ("src/humanize") lands at the top as "humanize", so it imports by name.
+        destination = self.paths.upstream_src / Path(config.package_path).name
         destination.parent.mkdir(parents=True, exist_ok=True)
         if package.is_dir():
             shutil.copytree(package, destination)
