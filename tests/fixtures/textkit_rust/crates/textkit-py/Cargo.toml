@@ -1,0 +1,15 @@
+[package]
+name = "textkit-py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "textkit"
+crate-type = ["cdylib"]
+
+[dependencies]
+textkit-core = { path = "../textkit-core" }
+num-bigint = "0.4"
+num-traits = "0.2"
+pyo3 = { version = "0.29", features = ["extension-module", "num-bigint"] }
