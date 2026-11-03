@@ -13,6 +13,7 @@ from fake_agents import (
     broken_port,
     cheat_import_original,
     limit_once,
+    needs_shared_change,
     regressing_cleanup,
     weak_checks_only,
 )
@@ -120,6 +121,17 @@ def test_repeated_failures_escalate_to_the_debugger(source):
     regressions = Path(config.run_dir) / "checks" / "regressions.json"
     assert regressions.exists(), "the failing input must become a permanent test"
     assert "floor_bucket" in regressions.read_text()
+
+
+def test_repeated_requests_for_frozen_changes_block_the_task_early(source):
+    agents = FakeAgents(behaviors={"porter": needs_shared_change, "debugger": needs_shared_change})
+    config = make_config(source, "frozen", fuzz_seconds=1, max_attempts=5)
+    state = Porter(config, agents).run()
+    attempts = [call for call in agents.calls if call.split(":")[0] in ("porter", "debugger")]
+    assert len(attempts) == 2, attempts
+    assert "not finished" in state["stopped"]
+    board = json.loads((Path(config.run_dir) / "control" / "board.json").read_text())
+    assert any("frozen shared code" in str(task.get("failure")) for task in board["tasks"].values()), board
 
 
 def test_usage_limit_pauses_and_resume_finishes_without_redoing_work(source):

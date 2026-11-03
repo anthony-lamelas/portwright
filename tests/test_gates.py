@@ -130,10 +130,11 @@ def test_seed_code_is_copied_in_but_not_frozen(tmp_path):
     seed.mkdir()
     (seed / "engine.rs").write_text("pub fn engine() {}\n")
     config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u",
-                    run_dir=tmp_path / "run", seed={"pyre": str(seed)})
+                    run_dir=tmp_path / "run", seed_crates={"pyre": str(seed)})
     porter = Porter(config, None)
     porter.paths.port.mkdir(parents=True)
     porter._vendor_crates()
     assert (porter.paths.port / "seed" / "pyre" / "engine.rs").exists()
     assert porter.run_state.read()["shared"] == {}
     assert "seed/pyre" in porter._vendor_note()
+    assert isinstance(config.seed, int), "the random seed must not be shadowed by another field"

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import re
 import shutil
@@ -154,6 +155,23 @@ def broken_port(agents, session):
         core.write_text(core.read_text().replace("n.div_mod_floor(size)", "n.div_rem(size)"))
         return AgentResult("ok", "done", {})
     return None
+
+
+def needs_shared_change(agents, session):
+    """Writes wrong Rust and asks for a frozen file to change, every attempt."""
+    if session.role in ("porter", "debugger"):
+        broken_port(agents, AgentSessionAs(session, "porter"))
+        requests = mount(session, "/work/out") / "requests"
+        requests.mkdir(parents=True, exist_ok=True)
+        (requests / "frozen.json").write_text(json.dumps(
+            {"type": "shared_change", "name": "shared type", "reason": "can't be done otherwise"}
+        ))
+        return AgentResult("ok", "done", {})
+    return None
+
+
+def AgentSessionAs(session, role):
+    return dataclasses.replace(session, role=role)
 
 
 def weak_checks_only(agents, session):

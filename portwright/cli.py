@@ -41,7 +41,7 @@ def _load_or_create_config(options) -> Config:
             canaries_path=options.canaries, reference_note=options.reference_note or "",
             vendor=dict(item.split("=", 1) for item in options.vendor or []),
             strict_bindings=options.strict_bindings,
-            seed={name: str(Path(path).resolve()) for name, path in (item.split("=", 1) for item in options.seed or [])},
+            seed_crates={name: str(Path(path).resolve()) for name, path in (item.split("=", 1) for item in options.seed or [])},
         )
         config.vendor = {name: str(Path(path).resolve()) for name, path in config.vendor.items()}
     if options.max_agents:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import time
@@ -78,7 +79,7 @@ class Config:
     vendor: dict = field(default_factory=dict)
     # Earlier code agents may start from: name -> directory, copied to seed/<name>.
     # Unlike vendored crates it isn't frozen or built; it has to earn its place through the gates.
-    seed: dict = field(default_factory=dict)
+    seed_crates: dict = field(default_factory=dict)
     # For ports of Python's built-ins: the PyO3 layer may only convert values and raise
     # exceptions, so it can't hand the work back to CPython.
     strict_bindings: bool = False
@@ -307,7 +308,7 @@ class Porter:
             frozen.update({f"vendor/{name}/{key}": value for key, value in hash_tree(destination).items()})
         if frozen:
             self.run_state.update(lambda d: d["shared"].update(frozen))
-        for name, directory in self.config.seed.items():
+        for name, directory in self.config.seed_crates.items():
             destination = self.paths.port / "seed" / name
             if destination.exists():
                 shutil.rmtree(destination)
@@ -322,8 +323,8 @@ class Porter:
                 "repr(), str(), methods or attributes of Python objects, because that would run CPython's code "
                 "instead of the port's. Build every behavior, including reprs and error messages, in the core."
             )
-        if self.config.seed:
-            names = ", ".join(f"`seed/{name}`" for name in self.config.seed)
+        if self.config.seed_crates:
+            names = ", ".join(f"`seed/{name}`" for name in self.config.seed_crates)
             note += (
                 f"\n\nEarlier code you may start from is in {names}. It isn't built and it's unverified here: it "
                 "passed the gates of another port only through that port's API. Move what's useful into the core "
@@ -545,7 +546,28 @@ class Porter:
             return MERGED
         self._log(f"  rejected {task_id}: {merged.reason}")
         text = merged.detail if merged.reason == "gate" else f"Your work conflicts with work merged since you started:\n{merged.detail}"
+        if merged.reason == "gate" and self._shared_change_attempts(task_id) >= 2:
+            # Two attempts agree the fix needs a frozen file changed. More porting
+            # can't get past that, and only a person can grant it.
+            return BLOCKED, f"needs a change to frozen shared code, requested in two attempts:\n{text}\n{notes}"
         return RETRY, f"{text}\n{notes}"
+
+    def _shared_change_attempts(self, task_id: str) -> int:
+        """How many attempts on this task filed a request to change frozen code."""
+        folder = self.paths.control / "requests"
+        pattern = re.compile(rf"done-{re.escape(task_id)}-a(\d+)-")
+        attempts = set()
+        for path in sorted(folder.glob("done-*.json")) if folder.is_dir() else ():
+            match = pattern.match(path.name)
+            if not match:
+                continue
+            try:
+                request = json.loads(path.read_text())
+            except ValueError:
+                continue
+            if request.get("type") == "shared_change":
+                attempts.add(match.group(1))
+        return len(attempts)
 
     def _pending_regressions(self, divergences: dict) -> None:
         pending = self.paths.control / "pending_regressions.json"
