@@ -147,7 +147,7 @@ def differential_gate(
         return GateResult("differential", False, "; ".join(problems), details)
     summary = f"no differences across {details['calls']} calls to {len(run.stats)} APIs"
     if details["not_compared"]:
-        summary += f"; {details['not_compared']} calls not compared because the original timed out"
+        summary += f"; {details['not_compared']} calls not compared because the original timed out or crashed"
     return GateResult("differential", True, summary, details)
 
 

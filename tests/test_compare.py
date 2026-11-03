@@ -117,6 +117,12 @@ def test_printed_output_is_compared(compare):
         session.same("f")
 
 
+def test_an_original_that_crashes_has_nothing_to_compare(compare):
+    session = compare("import os\ndef f(): os._exit(9)", "def f(): return 1")
+    session.same("f")
+    assert session.stats["f"]["not_compared"] == 1
+
+
 def test_crash_is_a_difference_and_the_worker_recovers(compare):
     session = compare(
         "def f(): return 1\ndef g(): return 2",

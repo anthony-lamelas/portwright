@@ -237,11 +237,13 @@ class Session:
         left = self.reference.request(self._build(base, handles, 0, args, kwargs))
         right = self.candidate.request(self._build(base, handles, 1, args, kwargs))
         self._count(api, left)
-        if left.get("kind") == "timeout" and right.get("kind") != "crashed":
-            # The original gave no answer in time, so there is nothing to match. Requiring
-            # the port to time out as well would reject a port for being faster
-            # (round(115, -99999999) takes CPython minutes). A crash still counts.
-            self.stats[api]["not_compared"] = self.stats[api].get("not_compared", 0) + 1
+        if left.get("kind") == "crashed" or (left.get("kind") == "timeout" and right.get("kind") != "crashed"):
+            # The original gave no answer, so there is nothing to match. Requiring the
+            # port to time out too would reject it for being faster (round(115,
+            # -99999999) takes CPython minutes), and an original that died, say at the
+            # worker's memory cap, has no outcome to copy. A port crash after an original
+            # timeout still counts.
+            self.stats[api]["not_compared"] = self.stats[api].get("not_compared", 0) + 1  # reported in gate summaries
             difference = None
         else:
             difference = find_difference(strip_handles(left), strip_handles(right))

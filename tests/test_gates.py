@@ -171,8 +171,15 @@ def test_cleanup_hears_about_rust_the_checks_never_run(tmp_path):
         {"file": "crates/x-core/src/lib.rs", "lines": 100.0, "functions": 1, "functions_covered": 1},
         {"file": "crates/x-core/src/object.rs", "lines": 39.4, "functions": 33, "functions_covered": 17},
     ]
-    porter.run_state.update(lambda d: d["gates"].update(rust_coverage={"details": {"files": files}}))
-    hints = porter._coverage_hints()
+    from unittest import mock
+
+    from portwright.gates import GateResult
+
+    measured = GateResult("rust_coverage", True, "", {"files": files})
+    with mock.patch("portwright.orchestrator.rust_coverage", return_value=measured):
+        hints = porter._coverage_hints()
+    with mock.patch("portwright.orchestrator.rust_coverage", return_value=GateResult("rust_coverage", False, "", {})):
+        assert porter._coverage_hints() == "", "no per-file numbers means no hints"
     assert "object.rs: the checks run 39% of its lines and 17/33 functions" in hints
     assert "table.rs: no code the checks can run" in hints
     assert "lib.rs" not in hints

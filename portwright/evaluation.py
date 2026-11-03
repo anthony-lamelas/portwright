@@ -109,7 +109,7 @@ def differential_for(project: Project, site: str, *, apis=None, seed=0, max_exam
     scope = "all APIs" if wanted is None else f"{len(wanted)} APIs"
     summary = f"no differences for {scope} across {details['calls']} calls"
     if details["not_compared"]:
-        summary += f"; {details['not_compared']} not compared because the original timed out"
+        summary += f"; {details['not_compared']} not compared because the original timed out or crashed"
     return GateResult("differential", True, summary, details)
 
 

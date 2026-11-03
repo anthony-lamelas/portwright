@@ -129,8 +129,19 @@ class Porter:
         self._log(f"redo from {phase}, by request")
 
     def _coverage_hints(self) -> str:
-        """Point cleanup at Rust the checks barely run: it is untested or dead."""
-        files = self.run_state.read()["gates"].get("rust_coverage", {}).get("details", {}).get("files", [])
+        """Point cleanup at Rust the checks barely run: it is untested or dead.
+
+        Coverage is measured now, on the code cleanup will change. Without per-file
+        numbers there are no hints: listing every file as unrun made an agent rightly
+        distrust the whole list.
+        """
+        measured = self._record(rust_coverage(
+            self.paths.port, self.paths.checks, self.paths.upstream_src, self.config.module,
+            f"crates/{self.py_crate}", target_dir=self._target("coverage"),
+        ))
+        files = measured.details.get("files", [])
+        if not files:
+            return ""
         low = [f for f in files if f["lines"] < 60]
         covered = {f["file"] for f in files}
         data_only = []
