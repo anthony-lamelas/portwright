@@ -113,6 +113,16 @@ def command_approve(options) -> int:
     return 0
 
 
+def command_decide(options) -> int:
+    """Record a person's ruling. Every later agent session gets it in its prompt."""
+    path = Path(options.run_dir).resolve() / "control" / "human_decisions.md"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"- {options.text.strip()}\n")
+    print(f"Recorded in {path}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="portwright", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -143,6 +153,10 @@ def main(argv=None) -> int:
     approve.add_argument("--crate", action="store_true")
     approve.add_argument("value")
     approve.set_defaults(handler=command_approve)
+    decide = commands.add_parser("decide", help="record a ruling every later agent session must follow")
+    decide.add_argument("--run-dir", required=True)
+    decide.add_argument("text")
+    decide.set_defaults(handler=command_decide)
     options = parser.parse_args(argv)
     return options.handler(options)
 

@@ -134,6 +134,16 @@ def test_repeated_requests_for_frozen_changes_block_the_task_early(source):
     assert any("frozen shared code" in str(task.get("failure")) for task in board["tasks"].values()), board
 
 
+def test_a_persons_decisions_reach_every_later_prompt(source):
+    from portwright.cli import main
+
+    agents = FakeAgents()
+    config = make_config(source, "decide", fuzz_seconds=1)
+    assert main(["decide", "--run-dir", str(config.run_dir), "Return 0 for huge negative ndigits."]) == 0
+    Porter(config, agents).run()
+    assert agents.prompts and all("Return 0 for huge negative ndigits." in prompt for prompt in agents.prompts)
+
+
 def test_usage_limit_pauses_and_resume_finishes_without_redoing_work(source):
     agents = FakeAgents(behaviors={"porter": limit_once})
     config = make_config(source, "limit", fuzz_seconds=1)

@@ -70,6 +70,7 @@ class FakeAgents:
 
     def __init__(self, plan=None, behaviors=None):
         self.calls: list[str] = []
+        self.prompts: list[str] = []
         self.plan = plan or {
             "tasks": [{"id": "everything", "apis": ALL_APIS, "depends_on": []}],
             "shared_paths": [],
@@ -78,6 +79,7 @@ class FakeAgents:
 
     def run(self, session: AgentSession) -> AgentResult:
         self.calls.append(f"{session.role}:{session.scratch.name}")
+        self.prompts.append(session.prompt)
         behavior = self.behaviors.get(session.role)
         if behavior:
             result = behavior(self, session)

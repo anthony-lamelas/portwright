@@ -195,6 +195,14 @@ class Porter:
             str(out): "/work/out",
             **mounts,
         }
+        human = self.paths.control / "human_decisions.md"
+        if human.exists() and human.read_text(encoding="utf-8").strip():
+            # A person's rulings go into every prompt. Agents treated a note in
+            # decisions.md as optional reading and missed one.
+            prompt += (
+                "\n\nDecisions by a person, which override anything else in your notes. Follow them:\n"
+                + human.read_text(encoding="utf-8").strip()
+            )
         self._log(f"  session {number} {role} ({label})")
         result = self.backend.run(
             AgentSession(
