@@ -106,11 +106,30 @@ The first real run exposed four harness bugs. Each one made correct work look wr
 - **Lone surrogates:** Hypothesis's `st.text()` never generates them, so a port that can't handle them passed. `portwright.compare.strategies.text()` now mixes them in, along with characters whose Unicode data changed between versions.
 - **Saved failures:** they were replayed by evaluating callbacks in the test process, where the library can't be imported. They are now sent to the workers.
 
-The `parse` run was resumed after each fix, not restarted, so its report shows a run that was paused and resumed.
+The `parse` run was resumed after each fix, not restarted, so its report shows a run that was paused and resumed. Every harness problem found by real runs since then is logged, with its cause and fix, in [docs/harness-issues.md](docs/harness-issues.md).
 
 ### Other ports of `parse`
 
 Others have ported `parse` to Rust, and I found them only after this run: [formatparse](https://github.com/eddiethedean/formatparse) (a PyO3 package that aims to be a drop-in replacement for common patterns) and [parse_rust](https://github.com/lucien2k/parse_rust) (Rust only). This port isn't meant to compete with them. It's a demonstration of the harness, and what's new here is the conformance evidence.
+
+## pycompat: Python's built-ins as Rust crates (in progress)
+
+Most Python libraries lean on the same built-ins: `str.format` and `%`, `repr` of floats, int parsing, floor division, Unicode string methods, `re`, and `datetime`. Every port has to reproduce them exactly, so rebuilding them per library wastes effort and invites small differences. pycompat ports them once, as crates later ports can vendor.
+
+There is no Python source to port for a built-in, so each one gets a **shim**: a small package of one-line functions that call the built-in, such as `def float_repr(x): return repr(x)`. CPython 3.12.14 is then "the original", and Portwright ports the shim like any other library. Three things keep that honest:
+
+- **`--strict-bindings`:** the PyO3 layer may only convert values and raise exceptions. It can't call `repr()`, `str()`, or any Python method that would run CPython's own code. A short list of conversion calls, such as `encode` with `surrogatepass`, is allowed.
+- **Hand-written planted bugs (`--canaries`):** the harness can't plant bugs in C code, so each shim has 38 to 42 subtle wrong versions, kept from agents. The checks must notice them.
+- **Declared domains:** shims accept only core built-in values. A `Decimal` raises a fixed `TypeError`, because its formatting is its own module's code.
+
+| Crate | Covers | Status |
+|---|---|---|
+| `pc_format` | `format()`, `str.format`, `%`, float `repr`, `int`/`float` parsing, `round`, `//`, `%`, `divmod`, `/` | running |
+| `pc_unicode` | case mapping, `is*` predicates, split/strip/pad, `unicodedata` (Unicode 15.0) | queued |
+| `pc_re` | `re` for str patterns, starting from the regex engine written for `parse` | queued |
+| `pc_datetime` | dates, times, timedeltas, ISO 8601, `strftime`, `strptime` | queued |
+
+The first `pc_format` run stopped after five rejected attempts on the same task. It exposed three harness bugs, which are now fixed (issues 18 to 20 in the log).
 
 ## Using it
 
@@ -130,7 +149,10 @@ git clone https://github.com/r1chardj0n3s/parse target/src/parse
 - **Your own API key:** use `--auth api_key` with `ANTHROPIC_API_KEY` set. Subscription mode (the default) is for personal runs on your own account, and it refuses to start if an API key is set.
 - **Resume:** run the same command again. Runs survive crashes and usage limits; `--wait` waits out limits for up to 72 hours.
 - **Approve:** `portwright.cli approve --run-dir ... "<difference>"` approves a proposed difference, and `--crate` adds a crate to the approved list. Only a person should do either.
-- **Cost:** the `parse` run took 31 agent sessions and about $56 of API-equivalent usage, as estimated by Claude Code: porters $12, debuggers $15, performance $18, everything else $11. That total includes debugger sessions whose fixes were rejected because of the harness bugs below. It doesn't include building the harness.
+- **Cost:** the `parse` run took 31 agent sessions and about $56 of API-equivalent usage, as estimated by Claude Code: porters $12, debuggers $15, performance $18, everything else $11. That total includes debugger sessions whose fixes were rejected because of the harness bugs above. It doesn't include building the harness.
+- **Parallel agents:** `--max-agents 2` runs independent tasks at once, each in its own worktree. All agent containers together are capped at 60% of RAM.
+- **Built-in shims:** `--strict-bindings`, `--canaries DIR` (hand-written planted bugs, relative to `--source`) and `--reference-note TEXT` (what "the original" is, for the report).
+- **Reusing earlier ports:** `--vendor NAME=DIR` copies a finished crate into `vendor/NAME` and freezes it. `--seed NAME=DIR` copies earlier code agents may start from, which isn't frozen and has to pass the gates.
 - **Harness tests:** `.venv/bin/python -m pytest tests` (about 20 minutes, no Claude usage). The tests use a small fixture library with a hand-written Rust port and scripted agents.
 
 ## Limits, read before trusting a report
@@ -155,6 +177,8 @@ skills/            Rust guidance mounted into agent sessions (see skills/ATTRIBU
 docker/            the toolchain image
 tests/             harness tests with a fixture library and scripted agents
 ports/parse/       the generated port, its checks, and CONFORMANCE.md
+pycompat/shims/    one-line shims over Python's built-ins, with their tests and planted bugs
+docs/              the harness issues log
 ```
 
 ## Credits and related work
