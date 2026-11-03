@@ -186,6 +186,16 @@ def test_merge_requires_the_gate_to_pass(workspaces):
     assert (workspaces.repo / "a.txt").read_text() == "changed\n"
 
 
+def test_build_leftovers_in_main_dont_block_a_merge(workspaces):
+    """Fuzzing builds in the main checkout and leaves an untracked Cargo.lock behind."""
+    path = workspaces.create("t1")
+    (path / "Cargo.lock").write_text("from the task\n")
+    assert workspaces.commit(path, "add lock")
+    (workspaces.repo / "Cargo.lock").write_text("left by a gate\n")
+    assert workspaces.merge("t1", path, always).merged
+    assert (workspaces.repo / "Cargo.lock").read_text() == "from the task\n"
+
+
 def test_a_rejected_fix_reaches_the_next_debugger(workspaces, tmp_path):
     """The next round must see the earlier work and why it was rejected."""
     prompts, seen = [], []

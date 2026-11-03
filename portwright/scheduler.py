@@ -216,6 +216,10 @@ class Workspaces:
             ok, detail = gate(Path(path))
             if not ok:
                 return MergeResult(False, "gate", detail)
+            # Only the harness writes in the main checkout, and gates that build there
+            # (fuzzing writes fuzz/Cargo.lock) can leave untracked files that block the
+            # merge. Ignored caches such as target/ stay.
+            self._git("clean", "-fdq")
             self._git("merge", "--ff-only", "-q", f"task/{name}")
             return MergeResult(True)
 
