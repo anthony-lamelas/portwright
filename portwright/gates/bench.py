@@ -57,10 +57,15 @@ def speedups(reference: dict, candidate: dict) -> dict[str, float | None]:
 
 def performance_gate(before: dict, after: dict, *, noise: float = NOISE) -> GateResult:
     """Accept a change only if something got measurably faster and nothing got slower."""
-    improved, regressed = {}, {}
+    improved, regressed, broken = {}, {}, {}
     for name, old in before.items():
         new = after.get(name, {})
-        if old.get("kind") != "benchmark" or new.get("kind") != "benchmark":
+        if old.get("kind") != "benchmark":
+            # It never measured anything (it raises on the code before the change, too),
+            # so it can't show a regression. Counting it as one rejected every change.
+            broken[name] = old.get("message") or old.get("kind")
+            continue
+        if new.get("kind") != "benchmark":
             regressed[name] = "benchmark didn't run"
             continue
         change = old["median_ns"] / new["median_ns"] - 1
@@ -70,7 +75,9 @@ def performance_gate(before: dict, after: dict, *, noise: float = NOISE) -> Gate
             regressed[name] = change
     passed = bool(improved) and not regressed
     summary = f"{len(improved)} faster, {len(regressed)} slower (noise threshold {noise:.0%})"
-    return GateResult("performance", passed, summary, {"improved": improved, "regressed": regressed})
+    if broken:
+        summary += f"; {len(broken)} benchmarks don't run and were ignored: {', '.join(broken)}"
+    return GateResult("performance", passed, summary, {"improved": improved, "regressed": regressed, "broken": broken})
 
 
 def run_native_benchmarks(workspace, core_crate: str, *, target_dir=None) -> dict:

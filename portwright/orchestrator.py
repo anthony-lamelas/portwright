@@ -416,7 +416,20 @@ class Porter:
         missed = canaries.details.get("missed", [])
         if missed:
             feedback.append(f"Planted bugs: {canaries.summary}\nNot caught:\n{json.dumps(missed[:60], indent=1)}")
+        broken = self._broken_benchmarks()
+        if broken:
+            feedback.append(
+                "These benchmarks raise on the original, so they measure nothing. Fix their arguments "
+                "(JSON has no tuples: a list is passed as a list):\n" + json.dumps(broken, indent=1)[:2000]
+            )
         return all(g.passed for g in (self_check, coverage, canaries)), "\n\n".join(feedback)
+
+    def _broken_benchmarks(self) -> dict:
+        benchmarks = load_benchmarks(self.paths.checks)
+        if not benchmarks:
+            return {}
+        results = run_benchmarks(self.reference, benchmarks, samples=1)
+        return {name: result.get("message") or result.get("kind") for name, result in results.items() if result.get("kind") != "benchmark"}
 
     def _test_writer_mounts(self, *extra: tuple[str, str]) -> dict[str, str]:
         return {str(self.paths.checks): "/work/checks", **dict(extra)}

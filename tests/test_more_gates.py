@@ -188,6 +188,10 @@ def test_performance_gate_needs_a_real_gain_and_no_regressions():
     assert not performance_gate({"a": fast}, {"a": similar}).passed, "noise isn't a gain"
     assert not performance_gate({"a": slow, "b": fast}, {"a": fast, "b": slow}).passed
     assert not performance_gate({"a": slow}, {"a": {"kind": "raised"}}).passed
+    # A benchmark that raises before the change too measures nothing and can't block one.
+    broken = {"kind": "raised", "message": "not enough arguments for format string"}
+    result = performance_gate({"a": slow, "b": broken}, {"a": fast, "b": broken})
+    assert result.passed and "b" in result.details["broken"] and "don't run" in result.summary
 
 
 def test_benchmarks_run_through_python(tmp_path):
