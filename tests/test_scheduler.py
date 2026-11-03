@@ -256,11 +256,14 @@ def test_forced_merge_conflict_is_reported_and_leaves_main_clean(workspaces):
     assert (result.merged, result.reason) == (False, "conflict")
     assert (workspaces.repo / "a.txt").read_text() == "from t1\n"
     assert git(second, "status", "--short") == ""
-    workspaces.discard("t2")
-    again = workspaces.create("t2")
-    (again / "a.txt").write_text("redone\n")
-    workspaces.commit(again, "redo")
-    assert workspaces.merge("t2", again, always).merged
+    # The task now sits on main with the clash marked, so the agent can fix it by editing.
+    assert "a.txt" in result.detail
+    marked = (second / "a.txt").read_text()
+    assert "<<<<<<<" in marked and "from t1" in marked and "from t2" in marked
+    (second / "a.txt").write_text("from t1\nfrom t2\n")
+    workspaces.commit(second, "resolve")
+    assert workspaces.merge("t2", second, always).merged
+    assert (workspaces.repo / "a.txt").read_text() == "from t1\nfrom t2\n"
 
 
 def test_nothing_to_commit_is_reported(workspaces):

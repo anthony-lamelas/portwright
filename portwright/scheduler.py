@@ -218,9 +218,8 @@ class Workspaces:
         with self._merge_lock:
             rebased = self._git("rebase", self.branch, cwd=path, check=False)
             if rebased.returncode != 0:
-                detail = (rebased.stdout + rebased.stderr)[-2000:]
                 self._git("rebase", "--abort", cwd=path, check=False)
-                return MergeResult(False, "conflict", detail)
+                return MergeResult(False, "conflict", self._leave_conflicts(name, path))
             ok, detail = gate(Path(path))
             if not ok:
                 return MergeResult(False, "gate", detail)
@@ -230,6 +229,30 @@ class Workspaces:
             self._git("clean", "-fdq")
             self._git("merge", "--ff-only", "-q", f"task/{name}")
             return MergeResult(True)
+
+    def _leave_conflicts(self, name: str, path) -> str:
+        """Move the task onto the latest main, with any conflicts left as markers.
+
+        Agents can't run git on the shared repository from their sandbox, so a task
+        that was only told "rebase" conflicted again every attempt. Now its branch
+        starts from main, its work is merged back in, and conflicting hunks are
+        committed with ``<<<<<<<`` markers for the next session to resolve.
+        """
+        before = self._git("rev-parse", "HEAD", cwd=path).stdout.strip()
+        self._git("update-ref", f"refs/portwright/before-conflict/{name}", before)
+        self._git("reset", "-q", "--hard", self.branch, cwd=path)
+        merged = self._git("merge", "--squash", before, cwd=path, check=False)
+        conflicted = self._git("diff", "--name-only", "--diff-filter=U", cwd=path).stdout.split()
+        self._git("add", "-A", cwd=path)
+        self._git("commit", "-qm", f"{name}: merged onto main; resolve conflict markers", "--allow-empty", cwd=path)
+        if not conflicted:
+            return "Your work was moved onto the latest main without conflicts."
+        return (
+            "Your work was moved onto the latest main. These files have git conflict markers "
+            "(<<<<<<< ======= >>>>>>>) where your changes and work merged since overlap. Edit each one "
+            "to keep both sides, and remove every marker:\n" + "\n".join(f"- {f}" for f in conflicted)
+            + "\n\n" + (merged.stdout + merged.stderr)[-1000:]
+        )
 
     def discard(self, name: str) -> None:
         path = self.worktrees / name

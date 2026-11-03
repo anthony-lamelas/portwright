@@ -611,7 +611,7 @@ class Porter:
             # can't get past that, and only a person can grant it.
             return BLOCKED, f"needs a change to frozen shared code, requested in two attempts:\n{text}\n{notes}"
         if merged.reason == "conflict":
-            return CONFLICT, f"{text}\nRebase onto main and keep both sides; your work itself wasn't rejected.\n{notes}"
+            return CONFLICT, f"{merged.detail}\nYour work itself wasn't rejected.\n{notes}"
         return RETRY, f"{text}\n{notes}"
 
     def _shared_change_attempts(self, task_id: str) -> int:
