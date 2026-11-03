@@ -87,9 +87,14 @@ def parse_result(stdout: str, returncode: int) -> AgentResult:
     return AgentResult("ok", text, usage)
 
 
+AGENTS_MEMORY_SHARE = 0.6  # all agent containers together; the rest is for the host's gate runs
+LABEL = "portwright.run"
+
+
 def memory_limit(share: float = 0.3, ceiling_gb: int = 16) -> str:
-    """Memory for one agent container: a share of this machine's RAM, so two agents
-    plus the host's own gate runs can't exhaust it. A fixed 16g did nothing on a 15 GB machine."""
+    """Memory for one agent container: a share of this machine's RAM, so the agents
+    plus the host's own gate runs can't exhaust it. A fixed 16g did nothing on a 15 GB
+    machine: an agent's scratch script reached 13 GB and starved the whole host."""
     try:
         with open("/proc/meminfo") as meminfo:
             total_kb = next(int(line.split()[1]) for line in meminfo if line.startswith("MemTotal:"))
@@ -115,11 +120,36 @@ def stop_container(name: str) -> None:
 class DockerClaude:
     """Runs Claude Code in a container with no network except the allowlist proxy."""
 
-    def __init__(self, proxy_socket: str | Path, auth: Auth, *, image: str = IMAGE, cargo_cache: str | Path | None = None):
+    def __init__(
+        self, proxy_socket: str | Path, auth: Auth, *, image: str = IMAGE, cargo_cache: str | Path | None = None,
+        run_label: str = "", max_agents: int = 1,
+    ):
         self.proxy_socket = Path(proxy_socket).resolve()
         self.auth = auth
         self.image = image
         self.cargo_cache = Path(cargo_cache).resolve() if cargo_cache else None
+        self.run_label = run_label
+        self.memory = memory_limit(share=min(0.3, AGENTS_MEMORY_SHARE / max(1, max_agents)))
+
+    def stop_leftovers(self, sessions_dir: str | Path | None = None) -> int:
+        """Stop this run's containers and delete token copies a killed run left behind.
+
+        Called at startup, at exit and on SIGTERM, so an orchestrator that dies can't
+        leave agents running, still spending usage, with nobody to merge their work.
+        """
+        stopped = 0
+        if self.run_label:
+            listed = subprocess.run(
+                ["docker", "ps", "-q", "--filter", f"label={LABEL}={self.run_label}"],
+                capture_output=True, text=True, check=False,
+            ).stdout.split()
+            for container in listed:
+                stop_container(container)
+                stopped += 1
+        if sessions_dir and Path(sessions_dir).is_dir():
+            for credentials in Path(sessions_dir).glob("*/home/.claude/.credentials.json"):
+                credentials.unlink(missing_ok=True)
+        return stopped
 
     def command(self, session: AgentSession, home: Path, env: dict[str, str], name: str) -> list[str]:
         docker = [
@@ -129,7 +159,8 @@ class DockerClaude:
             # no-new-privileges would be better, but snap Docker refuses to start with it.
             # The container still runs as a non-root user with no capabilities.
             "--cap-drop", "ALL",
-            "--memory", memory_limit(), "--memory-swap", memory_limit(), "--pids-limit", "4096",
+            "--memory", self.memory, "--memory-swap", self.memory, "--pids-limit", "4096",
+            "--label", f"{LABEL}={self.run_label}",
             "-v", f"{home.resolve()}:/home/agent",
             "-v", f"{SKILLS.resolve()}:/home/agent/.claude/skills:ro",
             "-v", f"{self.proxy_socket.parent}:/proxy",
@@ -161,7 +192,10 @@ class DockerClaude:
         ]
         if session.model:
             claude += ["--model", session.model]
-        script = "python3 /harness/portwright/sandbox_forward.py & exec " + " ".join(claude)
+        # The container ends itself after the session's time limit, even if the
+        # orchestrator that would have stopped it was killed.
+        limit = int(session.timeout) + 120
+        script = f"python3 /harness/portwright/sandbox_forward.py & exec timeout -k 30 {limit} " + " ".join(claude)
         return [*docker, self.image, "bash", "-c", script]
 
     def run(self, session: AgentSession) -> AgentResult:

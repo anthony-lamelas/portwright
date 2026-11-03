@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import signal
 import sys
 import time
 from pathlib import Path
@@ -62,7 +63,17 @@ def command_run(options) -> int:
     socket_path = Path(config.run_dir) / "build" / "proxy" / "p.sock"
     proxy = AllowlistProxy(socket_path)
     proxy.start()
-    backend = DockerClaude(socket_path, auth, cargo_cache=Path(config.run_dir) / "build" / "cargo-registry")
+    backend = DockerClaude(
+        socket_path, auth, cargo_cache=Path(config.run_dir) / "build" / "cargo-registry",
+        run_label=str(Path(config.run_dir).resolve()), max_agents=config.max_agents,
+    )
+    sessions = Path(config.run_dir) / "sessions"
+    leftover = backend.stop_leftovers(sessions)
+    if leftover:
+        print(f"Stopped {leftover} agent containers left by an earlier run.", flush=True)
+    # Turn SIGTERM into an exit so the cleanup below runs. SIGKILL can't be caught;
+    # the containers' own time limit and the startup cleanup cover that case.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     deadline = time.time() + options.max_wait_hours * 3600
     try:
         while True:
@@ -76,6 +87,7 @@ def command_run(options) -> int:
                 print(f"Usage limit reached. Retrying in {LIMIT_WAIT_SECONDS // 60} minutes: {str(limit)[:200]}", flush=True)
                 time.sleep(LIMIT_WAIT_SECONDS)
     finally:
+        backend.stop_leftovers(sessions)
         proxy.stop()
     report = json.loads((Path(config.run_dir) / "control" / "report.json").read_text())
     print(f"Result: {report['result']}")
