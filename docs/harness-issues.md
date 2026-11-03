@@ -19,9 +19,10 @@ differences belong in each port's `CONFORMANCE.md`, not here. New entries go at 
 | 10 | humanize | A resumed run would have waited 3 hours to restart tasks | Claims left by the killed run held their lease | A run frees all claims when porting starts |
 | 11 | humanize | A porter built its own comparison tool, which caused #8 | The planner put Python's formatting in a "foundation" task whose own APIs never used it, so the harness couldn't check that work | Planner rule: no infrastructure-only tasks. Porter rule: rely on the check command and flag unreachable work |
 | 12 | pycompat | Planted bugs mean nothing for a shim over built-ins | The original's logic is CPython's C code, so there is no Python to plant bugs in | Runs can supply hand-written planted bugs, kept from agents |
-| 13 | pycompat | Two of my own 42 hand-written planted bugs changed nothing | One reproduced Python's output exactly, and one's trigger condition was never true | Caught by applying each to the shim and checking that an output changes. See open item C |
+| 13 | pycompat | 3 of my own 119 hand-written planted bugs changed nothing | Each either reproduced Python's output exactly or had a trigger condition that was never true | Caught by applying each to the shim and checking that an output changes. See open item C |
 | 14 | pycompat | Checks could make the host run out of memory | Comparison workers run on the host without a limit, and a formatting check can ask for a width of billions | Each worker's address space is capped at 1 GB (`PORTWRIGHT_WORKER_MEMORY_MB`), so huge requests raise `MemoryError` in both versions and the outcome is still compared. Covers part of open item E |
 | 15 | pycompat | A port of the built-ins could pass without porting anything | The PyO3 layer may import `builtins` and call `repr()`, `str()` and methods on Python objects, which run CPython's own code. Found by review before any agent tried it | `--strict-bindings`: the binding crate may only convert values and raise exceptions. A short list of conversion calls, such as `encode` with `surrogatepass`, is allowed |
+| 16 | pycompat | Two hand-written planted bugs would have counted as caught for the wrong reason | They called an original they never saved, so they crashed with `NameError`, which any check notices | `load_written_canaries` refuses a bug that uses an `_orig_*` name it doesn't define |
 
 ## Open
 
@@ -33,3 +34,5 @@ differences belong in each port's `CONFORMANCE.md`, not here. New entries go at 
 | D | humanize | If the orchestrator dies by SIGKILL, its containers run until their own time limit (up to about 2 hours) | A heartbeat file the container watches |
 | E | humanize | The host-side gate runs (original library, Rust builds) have no memory limit | Run them under a cgroup limit as well |
 | F | parse | The final reviewer's findings arrive after the last fix round, so they can only be reported | Allow one more fix round when the final review finds confirmed behavior differences |
+| G | pycompat | Warnings aren't compared. `re` emits `FutureWarning` for patterns like `[[:alpha:]]`, and a port that never warns still matches | Record warnings raised during each call as part of the outcome |
+| H | pycompat | Two runs at once would each give agents 60% of RAM, so the four pycompat ports run one after another | A machine-wide agent budget shared by all runs |

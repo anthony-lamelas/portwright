@@ -53,6 +53,13 @@ def load_written_canaries(canaries_dir: str | Path, target_file: str = "__init__
         text = path.read_text(encoding="utf-8")
         first = text.splitlines()[0] if text else ""
         description = first.removeprefix("# canary:").strip() if first.startswith("# canary:") else path.stem
+        # A bug that calls an original it never saved crashes with NameError, which any
+        # check notices. It would count as caught for the wrong reason, so refuse it.
+        tree = ast.parse(text)
+        saved = {t.id for node in ast.walk(tree) if isinstance(node, ast.Assign) for t in node.targets if isinstance(t, ast.Name)}
+        used = {n.id for n in ast.walk(tree) if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load) and n.id.startswith("_orig_")}
+        if used - saved:
+            raise ValueError(f"{path.name} uses {', '.join(sorted(used - saved))} without saving it first")
         mutants.append(Mutant(target_file, index, 0, f"{path.stem}: {description}", snippet=text))
     return mutants
 
