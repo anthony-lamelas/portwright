@@ -36,14 +36,23 @@ def fuzz_gate(workspace, *, seconds_per_target: int = 60, target_dir=None, paral
             workspace, target_dir=target_dir, timeout=seconds_per_target + 900,
         )
 
-    crashes = {}
+    crashes, memory_limit = {}, {}
     with ThreadPoolExecutor(max_workers=max(1, parallel)) as pool:
         for target, done in pool.map(run, targets):
-            if done.returncode != 0:
-                crashes[target] = (done.stdout + done.stderr)[-1500:]
+            if done.returncode == 0:
+                continue
+            output = (done.stdout + done.stderr)[-1500:]
+            # An input can legitimately ask for gigabytes ("{:={}{}}" with widths 29298 and
+            # 29298 is a 2.9 GB string, in Python too). That is not a bug a debugger can fix,
+            # so it is reported for a person to look at instead of failing the gate.
+            if "libFuzzer: out-of-memory" in output:
+                memory_limit[target] = output
+            else:
+                crashes[target] = output
+    details = {"targets": targets, "seconds_per_target": seconds_per_target, "memory_limit": memory_limit}
     if crashes:
-        return GateResult("fuzz", False, f"crashes in {', '.join(crashes)}", {"crashes": crashes, "targets": targets})
-    return GateResult(
-        "fuzz", True, f"no crashes in {len(targets)} targets, {seconds_per_target}s each",
-        {"targets": targets, "seconds_per_target": seconds_per_target},
-    )
+        return GateResult("fuzz", False, f"crashes in {', '.join(crashes)}", {**details, "crashes": crashes})
+    summary = f"no crashes in {len(targets)} targets, {seconds_per_target}s each"
+    if memory_limit:
+        summary += f"; {', '.join(memory_limit)} reached the 2 GB memory limit, which needs a person to check"
+    return GateResult("fuzz", True, summary, details)

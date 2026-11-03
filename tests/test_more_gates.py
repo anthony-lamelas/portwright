@@ -290,9 +290,16 @@ def test_fuzz_gate_needs_targets_and_finds_crashes(rust_workspace):
     assert good.passed, good.details
     target.write_text(target.read_text().replace("let _ = textkit_core", 'if data.first() == Some(&b"a"[0]) { panic!("found") }\n let _ = textkit_core'))
     bad = fuzz_gate(rust_workspace, seconds_per_target=20, target_dir=REPO_TARGET / "fuzz-target")
-    shutil.rmtree(fuzz)
     assert not bad.passed
     assert "digits" in bad.details["crashes"]
+    # An input that asks for more memory than the limit is reported, not failed.
+    target.write_text(target.read_text().replace(
+        'panic!("found")', 'let big = vec![1u8; 3_000_000_000]; std::hint::black_box(&big);'
+    ))
+    huge = fuzz_gate(rust_workspace, seconds_per_target=20, target_dir=REPO_TARGET / "fuzz-target")
+    shutil.rmtree(fuzz)
+    assert huge.passed, huge.details
+    assert "digits" in huge.details["memory_limit"] and "memory limit" in huge.summary
 
 
 @docker

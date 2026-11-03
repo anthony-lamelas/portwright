@@ -28,6 +28,7 @@ differences belong in each port's `CONFORMANCE.md`, not here. New entries go at 
 | 19 | pc_format | Debuggers kept retrying a task that only a person could unblock | A request to change frozen code was recorded, but the task went on to its next attempt anyway | A task is blocked as soon as two attempts have asked to change frozen code |
 | 20 | pc_format | The random seed for every check would have been `{}` in the next run | Adding `--seed` gave `Config` a second field named `seed`, and a dataclass keeps the last one silently. Found by a harness test while adding #19 | Renamed to `seed_crates`. A test checks the random seed is still an int |
 | 21 | pc_format | The planted-bug gate printed "caught 19/19 (100%)" when 23 of the 42 hand-written bugs were never judged | A bug counts as not viable when the checks fail without a difference, and not-viable bugs left the total. Here one broken test failed first, whatever the bug | Hand-written bugs are known to apply, so one that can't be judged counts against the score, and the summary names how many |
+| 22 | pc_format | A fuzz "crash" sent a debugger after a bug that doesn't exist | `"{:={}{}}"` with arguments 29298 and 29298 asks for a 2.9 GB string, which Python would also try to build. libFuzzer stopped at its 2 GB limit, and the gate counted that as a crash. The target's own size filter checked each width source alone, so it missed one built from two | A memory-limit stop is reported for a person to check, and doesn't fail the gate. Panics, hangs and other crashes still fail it |
 
 ## Open
 
