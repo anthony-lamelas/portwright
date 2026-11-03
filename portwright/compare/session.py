@@ -237,7 +237,14 @@ class Session:
         left = self.reference.request(self._build(base, handles, 0, args, kwargs))
         right = self.candidate.request(self._build(base, handles, 1, args, kwargs))
         self._count(api, left)
-        difference = find_difference(strip_handles(left), strip_handles(right))
+        if left.get("kind") == "timeout" and right.get("kind") != "crashed":
+            # The original gave no answer in time, so there is nothing to match. Requiring
+            # the port to time out as well would reject a port for being faster
+            # (round(115, -99999999) takes CPython minutes). A crash still counts.
+            self.stats[api]["not_compared"] = self.stats[api].get("not_compared", 0) + 1
+            difference = None
+        else:
+            difference = find_difference(strip_handles(left), strip_handles(right))
         if difference:
             self._record_divergence(api, args, kwargs, left, right, difference)
         if left.get("kind") == "raised":

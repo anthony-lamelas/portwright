@@ -91,6 +91,7 @@ def differential_for(project: Project, site: str, *, apis=None, seed=0, max_exam
         "approved_seen": sorted(set(run.divergences) & approved),
         "calls": sum(counts["calls"] for counts in run.stats.values()),
         "stats": run.stats,
+        "not_compared": sum(counts.get("not_compared", 0) for counts in run.stats.values()),
     }
     if run.exit_status not in (PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED) or not run.stats:
         details["output"] = run.output[-3000:]
@@ -106,7 +107,10 @@ def differential_for(project: Project, site: str, *, apis=None, seed=0, max_exam
     if blocking:
         return GateResult("differential", False, f"{len(blocking)} kinds of difference", details)
     scope = "all APIs" if wanted is None else f"{len(wanted)} APIs"
-    return GateResult("differential", True, f"no differences for {scope} across {details['calls']} calls", details)
+    summary = f"no differences for {scope} across {details['calls']} calls"
+    if details["not_compared"]:
+        summary += f"; {details['not_compared']} not compared because the original timed out"
+    return GateResult("differential", True, summary, details)
 
 
 def _shared_problems(workspace: Path, shared: dict) -> list[str]:

@@ -134,6 +134,7 @@ def differential_gate(
         "divergences": run.divergences,
         "failures": run.failures,
         "reach": reach,
+        "not_compared": sum(counts.get("not_compared", 0) for counts in run.stats.values()),
     }
     problems = []
     if run.exit_status == PYTEST_EXIT_TESTS_FAILED:
@@ -144,11 +145,10 @@ def differential_gate(
         problems.append(f"APIs rarely returning normally: {', '.join(reach['rarely_returned'])}")
     if problems:
         return GateResult("differential", False, "; ".join(problems), details)
-    return GateResult(
-        "differential", True,
-        f"no differences across {details['calls']} calls to {len(run.stats)} APIs",
-        details,
-    )
+    summary = f"no differences across {details['calls']} calls to {len(run.stats)} APIs"
+    if details["not_compared"]:
+        summary += f"; {details['not_compared']} calls not compared because the original timed out"
+    return GateResult("differential", True, summary, details)
 
 
 def self_comparison_gate(checks_dir, side: dict, *, api=None, seed=0, max_examples=200) -> GateResult:

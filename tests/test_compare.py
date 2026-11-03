@@ -138,6 +138,27 @@ def test_hang_is_a_difference_and_the_worker_recovers(compare):
     session.same("g")
 
 
+def test_a_faster_port_is_not_a_difference_when_the_original_times_out(compare):
+    session = compare(
+        "def f():\n    while True: pass\ndef g(): return 2",
+        "def f(): return 1\ndef g(): return 2",
+        timeout=0.5,
+    )
+    session.same("f")
+    assert session.stats["f"]["not_compared"] == 1
+    session.same("g")
+
+
+def test_a_crash_still_counts_when_the_original_times_out(compare):
+    session = compare(
+        "def f():\n    while True: pass",
+        "import os\ndef f(): os._exit(7)",
+        timeout=0.5,
+    )
+    with pytest.raises(Divergence, match="crashed"):
+        session.same("f")
+
+
 def test_lone_surrogates_and_huge_ints_survive_the_trip(compare):
     session = compare("def f(x): return x", "def f(x): return x")
     session.same("f", "\ud800")
