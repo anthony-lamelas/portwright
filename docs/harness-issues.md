@@ -23,13 +23,13 @@ differences belong in each port's `CONFORMANCE.md`, not here. New entries go at 
 | 14 | pycompat | Checks could make the host run out of memory | Comparison workers run on the host without a limit, and a formatting check can ask for a width of billions | Each worker's address space is capped at 1 GB (`PORTWRIGHT_WORKER_MEMORY_MB`), so huge requests raise `MemoryError` in both versions and the outcome is still compared. Covers part of open item E |
 | 15 | pycompat | A port of the built-ins could pass without porting anything | The PyO3 layer may import `builtins` and call `repr()`, `str()` and methods on Python objects, which run CPython's own code. Found by review before any agent tried it | `--strict-bindings`: the binding crate may only convert values and raise exceptions. A short list of conversion calls, such as `encode` with `surrogatepass`, is allowed |
 | 16 | pycompat | Two hand-written planted bugs would have counted as caught for the wrong reason | They called an original they never saved, so they crashed with `NameError`, which any check notices | `load_written_canaries` refuses a bug that uses an `_orig_*` name it doesn't define |
+| 17 | parse | Hardening took about 2.5 hours, mostly waiting | Fuzz targets and mutation runs went one at a time | Fuzz targets are built once and run three at a time, with 2 GB each. Rust mutants are split across three workers, each with its own source copy and build directory. Was open item B |
 
 ## Open
 
 | # | Found in | Issue | Idea |
 |---|---|---|---|
 | A | humanize | The planner rule in #11 is only in the prompt. Code can't tell from a plan whether a task's notes hide unchecked work | Measure Rust coverage of each task's new code with its own checks, at merge time |
-| B | parse | Fuzz targets and mutation runs go one at a time, which is most of the 2.5-hour hardening phase | Run them in parallel within the memory budget |
 | C | pycompat | The harness can't tell a no-op hand-written planted bug from a blind spot in the checks. Both count as "missed" | Before the checks phase, confirm each written bug changes some output, using the upstream tests' inputs |
 | D | humanize | If the orchestrator dies by SIGKILL, its containers run until their own time limit (up to about 2 hours) | A heartbeat file the container watches |
 | E | humanize | The host-side gate runs (original library, Rust builds) have no memory limit | Run them under a cgroup limit as well |

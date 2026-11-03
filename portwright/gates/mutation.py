@@ -57,8 +57,15 @@ def mutation_gate(
     seed: int = 0,
     max_examples: int = 100,
     target_dir=None,
+    parallel: int = 3,
 ) -> GateResult:
-    """Fail if the checks notice too few of the sampled Rust mutants."""
+    """Fail if the checks notice too few of the sampled Rust mutants.
+
+    The sample is split across ``parallel`` workers, each with its own copy of the
+    source, build directory and package folder, so they never share files.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
     work_dir = Path(work_dir).resolve()
     copy = work_dir / "source"
     if copy.exists():
@@ -67,37 +74,57 @@ def mutation_gate(
     mutants = list_rust_mutants(copy, target_dir=target_dir)
     if len(mutants) > sample:
         mutants = random.Random(seed).sample(mutants, sample)
-    site = work_dir / "site"
-    caught, missed, unviable = [], [], 0
-    for mutant in mutants:
-        diff = mutant["diff"]
-        if not _apply(diff, copy, mutant["file"]):
-            unviable += 1
-            continue
-        try:
-            built = build_python_package(copy, crate, site, target_dir=target_dir)
-            if built.returncode != 0:
-                unviable += 1
+    workers = max(1, min(parallel, len(mutants)))
+
+    def work(index: int) -> list[tuple[str, dict | None]]:
+        mine = work_dir / f"source-{index}"
+        if mine.exists():
+            shutil.rmtree(mine)
+        shutil.copytree(copy, mine)
+        site = work_dir / f"site-{index}"
+        target = Path(target_dir) / f"mutant-{index}" if target_dir else None
+        results = []
+        for mutant in mutants[index::workers]:
+            diff = mutant["diff"]
+            if not _apply(diff, mine, mutant["file"]):
+                results.append(("unviable", None))
                 continue
-            run = run_checks(
-                checks_dir, reference, {**reference, "path": str(site)},
-                seed=seed, max_examples=max_examples, stop_at_first=True, timeout=5.0,
-            )
-        finally:
-            if not _apply(diff, copy, mutant["file"], reverse=True):
-                raise RuntimeError(f"couldn't undo mutant in {mutant['file']}")
-        label = {
-            "file": mutant["file"],
-            "line": mutant.get("span", {}).get("start", {}).get("line"),
-            "function": (mutant.get("function") or {}).get("function_name"),
-            "change": mutant.get("replacement", ""),
-        }
-        if run.exit_status == PYTEST_EXIT_TESTS_FAILED and run.divergences:
-            caught.append(label)
-        elif run.exit_status == PYTEST_EXIT_OK:
-            missed.append(label)
-        else:
-            unviable += 1
+            try:
+                built = build_python_package(mine, crate, site, target_dir=target)
+                if built.returncode != 0:
+                    results.append(("unviable", None))
+                    continue
+                run = run_checks(
+                    checks_dir, reference, {**reference, "path": str(site)},
+                    seed=seed, max_examples=max_examples, stop_at_first=True, timeout=5.0,
+                )
+            finally:
+                if not _apply(diff, mine, mutant["file"], reverse=True):
+                    raise RuntimeError(f"couldn't undo mutant in {mutant['file']}")
+            label = {
+                "file": mutant["file"],
+                "line": mutant.get("span", {}).get("start", {}).get("line"),
+                "function": (mutant.get("function") or {}).get("function_name"),
+                "change": mutant.get("replacement", ""),
+            }
+            if run.exit_status == PYTEST_EXIT_TESTS_FAILED and run.divergences:
+                results.append(("caught", label))
+            elif run.exit_status == PYTEST_EXIT_OK:
+                results.append(("missed", label))
+            else:
+                results.append(("unviable", None))
+        return results
+
+    caught, missed, unviable = [], [], 0
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for results in pool.map(work, range(workers)):
+            for verdict, label in results:
+                if verdict == "caught":
+                    caught.append(label)
+                elif verdict == "missed":
+                    missed.append(label)
+                else:
+                    unviable += 1
     viable = len(caught) + len(missed)
     score = len(caught) / viable if viable else 0.0
     return GateResult(
