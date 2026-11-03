@@ -124,12 +124,19 @@ There is no Python source to port for a built-in, so each one gets a **shim**: a
 
 | Crate | Covers | Status |
 |---|---|---|
-| `pc_format` | `format()`, `str.format`, `%`, float `repr`, `int`/`float` parsing, `round`, `//`, `%`, `divmod`, `/` | running |
-| `pc_unicode` | case mapping, `is*` predicates, split/strip/pad, `unicodedata` (Unicode 15.0) | queued |
+| `pc_format` | `format()`, `str.format`, `%`, float `repr`, `int`/`float` parsing, `round`, `//`, `%`, `divmod`, `/` | matched on what was tested ([report](pycompat/ports/pc_format/CONFORMANCE.md)) |
+| `pc_unicode` | case mapping, `is*` predicates, split/strip/pad, `unicodedata` (Unicode 15.0) | running |
 | `pc_re` | `re` for str patterns, starting from the regex engine written for `parse` | queued |
 | `pc_datetime` | dates, times, timedeltas, ISO 8601, `strftime`, `strptime` | queued |
 
-The first `pc_format` run stopped after five rejected attempts on the same task. It exposed three harness bugs, which are now fixed (issues 18 to 20 in the log).
+**`pc_format`** matched CPython on 22,574 compared calls. All 222 shim tests pass, including the 5 held back from agents, and the checks caught 38 of 42 planted bugs. Through Python, it is 1.3x to 5.8x faster than the built-ins. It took three runs and about $73 of API-equivalent usage. Before trusting it, read these:
+
+- The final reviewer found one difference the checks missed. With two unsupported keyword arguments, the port names a different type in its `TypeError`. Fixing it needs a change to the frozen binding.
+- `round(n, -k)` with a huge `k` returns 0 at once, where CPython spends minutes building `10**k`. That was a person's decision. Calls where CPython timed out or crashed (10 of them) weren't compared.
+- The crate carries a 2,736-line table of CPython attribute lookups. A gap in the shim's attribute check (open item J) still makes it reachable through malformed templates.
+- Strings are stored as 4 bytes per character, so a result with hundreds of millions of characters needs several times Python's memory.
+
+Building `pc_format` exposed thirteen harness bugs, issues 18 to 30 in the log. The worst, #29, was that the comparison worker crashed on ints over 4,300 digits on both sides, so those calls passed without being compared. The `parse` run recorded no crashed calls, so its results aren't affected.
 
 ## Using it
 
@@ -178,6 +185,7 @@ docker/            the toolchain image
 tests/             harness tests with a fixture library and scripted agents
 ports/parse/       the generated port, its checks, and CONFORMANCE.md
 pycompat/shims/    one-line shims over Python's built-ins, with their tests and planted bugs
+pycompat/ports/    finished pycompat crates, their checks, and CONFORMANCE.md
 docs/              the harness issues log
 ```
 

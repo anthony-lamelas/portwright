@@ -1,0 +1,93 @@
+[
+ {
+  "target": "format_value",
+  "args": [
+   {
+    "t": "float",
+    "v": "-0x0.0p+0"
+   },
+   {
+    "t": "str",
+    "v": ".1100000000"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "str_format",
+  "args": [
+   {
+    "t": "str",
+    "v": "{x:.{p}}"
+   },
+   {
+    "t": "tuple",
+    "v": []
+   },
+   {
+    "t": "dict",
+    "v": [
+     [
+      {
+       "t": "str",
+       "v": "x"
+      },
+      {
+       "t": "float",
+       "v": "0x0.0p+0"
+      }
+     ],
+     [
+      {
+       "t": "str",
+       "v": "p"
+      },
+      {
+       "t": "int",
+       "v": "1100000000"
+      }
+     ]
+    ]
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "str_format",
+  "args": [
+   {
+    "t": "str",
+    "v": "{}"
+   },
+   {
+    "t": "tuple",
+    "v": [
+     {
+      "t": "float",
+      "v": "0x1.0000000000028p+46"
+     }
+    ]
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "percent_format",
+  "args": [
+   {
+    "t": "str",
+    "v": "%.1100000000g"
+   },
+   {
+    "t": "tuple",
+    "v": [
+     {
+      "t": "float",
+      "v": "0x0.0p+0"
+     }
+    ]
+   }
+  ],
+  "kwargs": {}
+ }
+]

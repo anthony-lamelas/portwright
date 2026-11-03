@@ -1,0 +1,12 @@
+[
+ {"name": "format_float_fixed", "target": "format_value", "args": [1234567.891234, ",.2f"], "kwargs": {}},
+ {"name": "format_int_hex_padded", "target": "format_value", "args": [3735928559, "#018_x"], "kwargs": {}},
+ {"name": "str_format_template", "target": "str_format", "args": ["{name:>10} | {0:08.3f} | {1!r:^12} | {2:,}", [3.14159, "abc", 1234567]], "kwargs": {"kwargs": {"name": "total"}}},
+ {"name": "percent_format_row", "target": "percent_format", "args": ["%-10s %5d %8.3f %x %r", ["item", 42, 2.71828, 255, "q"]], "kwargs": {}},
+ {"name": "float_repr_shortest", "target": "float_repr", "args": [0.30000000000000004], "kwargs": {}},
+ {"name": "parse_float_text", "target": "parse_float", "args": ["  -1.2345678901234567e-123  "], "kwargs": {}},
+ {"name": "parse_int_big", "target": "parse_int", "args": ["123456789012345678901234567890123456789012345678901234567890"], "kwargs": {}},
+ {"name": "int_str_big", "target": "int_str", "args": [123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890], "kwargs": {}},
+ {"name": "round_float_digits", "target": "round_number", "args": [2.675, 2], "kwargs": {}},
+ {"name": "div_mod_floats", "target": "div_mod", "args": [-7.25, 2.5], "kwargs": {}}
+]

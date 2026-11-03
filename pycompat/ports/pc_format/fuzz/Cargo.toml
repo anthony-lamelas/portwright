@@ -1,0 +1,115 @@
+[package]
+name = "pc-format-port-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = "1"
+num-bigint = "0.4"
+
+[dependencies.pc-format-port-core]
+path = "../crates/pc-format-port-core"
+
+# Keep this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "div_mod"
+path = "fuzz_targets/div_mod.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "float_repr"
+path = "fuzz_targets/float_repr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "floor_div"
+path = "fuzz_targets/floor_div.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "format_value"
+path = "fuzz_targets/format_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "int_str"
+path = "fuzz_targets/int_str.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "int_to_float"
+path = "fuzz_targets/int_to_float.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "modulo"
+path = "fuzz_targets/modulo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_float"
+path = "fuzz_targets/parse_float.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_int"
+path = "fuzz_targets/parse_int.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "percent_format"
+path = "fuzz_targets/percent_format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "round_number"
+path = "fuzz_targets/round_number.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "str_format"
+path = "fuzz_targets/str_format.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "true_div"
+path = "fuzz_targets/true_div.rs"
+test = false
+doc = false
+bench = false
