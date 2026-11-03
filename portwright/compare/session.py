@@ -178,6 +178,11 @@ class Pair:
         self._candidate = candidate
         self.porter_handle = None  # set per side while encoding; see Session._encode
 
+    def __repr__(self) -> str:
+        # Shown in difference examples. The default "<Pair object at 0x...>" told the
+        # agent nothing about what was passed.
+        return f"<{self._api} object returned by an earlier call>"
+
     def call(self, name, /, *args, **kwargs):
         return self._session._call(f"{self._api}.{name}", {"op": "call", "path": name}, (self._reference, self._candidate), args, kwargs)
 
