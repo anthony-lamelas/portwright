@@ -121,3 +121,19 @@ def test_vendored_crates_are_copied_in_and_frozen(tmp_path):
     (vendored / "src" / "lib.rs").write_text("pub fn g() {}\n")
     assert _shared_problems(porter.paths.port, shared) == ["vendor/pycompat-fmt/src/lib.rs is frozen and can't be changed; file a request instead"]
     assert "vendor/pycompat-fmt" in porter._vendor_note()
+
+
+def test_seed_code_is_copied_in_but_not_frozen(tmp_path):
+    from portwright.orchestrator import Config, Porter
+
+    seed = tmp_path / "pyre"
+    seed.mkdir()
+    (seed / "engine.rs").write_text("pub fn engine() {}\n")
+    config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u",
+                    run_dir=tmp_path / "run", seed={"pyre": str(seed)})
+    porter = Porter(config, None)
+    porter.paths.port.mkdir(parents=True)
+    porter._vendor_crates()
+    assert (porter.paths.port / "seed" / "pyre" / "engine.rs").exists()
+    assert porter.run_state.read()["shared"] == {}
+    assert "seed/pyre" in porter._vendor_note()

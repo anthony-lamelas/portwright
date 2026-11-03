@@ -76,6 +76,9 @@ class Config:
     # Finished Rust crates this port may use: name -> crate directory. Copied into
     # vendor/<name> and frozen, so the port ships with exactly what it was checked against.
     vendor: dict = field(default_factory=dict)
+    # Earlier code agents may start from: name -> directory, copied to seed/<name>.
+    # Unlike vendored crates it isn't frozen or built; it has to earn its place through the gates.
+    seed: dict = field(default_factory=dict)
     # For ports of Python's built-ins: the PyO3 layer may only convert values and raise
     # exceptions, so it can't hand the work back to CPython.
     strict_bindings: bool = False
@@ -304,6 +307,11 @@ class Porter:
             frozen.update({f"vendor/{name}/{key}": value for key, value in hash_tree(destination).items()})
         if frozen:
             self.run_state.update(lambda d: d["shared"].update(frozen))
+        for name, directory in self.config.seed.items():
+            destination = self.paths.port / "seed" / name
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(Path(directory), destination, ignore=shutil.ignore_patterns("target", ".git"))
 
     def _vendor_note(self) -> str:
         note = ""
@@ -313,6 +321,13 @@ class Porter:
                 "convert arguments and results and raise exceptions. It can't import any Python module, or call "
                 "repr(), str(), methods or attributes of Python objects, because that would run CPython's code "
                 "instead of the port's. Build every behavior, including reprs and error messages, in the core."
+            )
+        if self.config.seed:
+            names = ", ".join(f"`seed/{name}`" for name in self.config.seed)
+            note += (
+                f"\n\nEarlier code you may start from is in {names}. It isn't built and it's unverified here: it "
+                "passed the gates of another port only through that port's API. Move what's useful into the core "
+                "crate, fix what the checks show is wrong, and delete the seed folder when you're done with it."
             )
         if not self.config.vendor:
             return note

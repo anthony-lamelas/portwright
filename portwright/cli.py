@@ -41,6 +41,7 @@ def _load_or_create_config(options) -> Config:
             canaries_path=options.canaries, reference_note=options.reference_note or "",
             vendor=dict(item.split("=", 1) for item in options.vendor or []),
             strict_bindings=options.strict_bindings,
+            seed={name: str(Path(path).resolve()) for name, path in (item.split("=", 1) for item in options.seed or [])},
         )
         config.vendor = {name: str(Path(path).resolve()) for name, path in config.vendor.items()}
     if options.max_agents:
@@ -128,6 +129,8 @@ def main(argv=None) -> int:
     run.add_argument("--reference-note", help="what the original really is, for the report")
     run.add_argument("--vendor", action="append", metavar="NAME=CRATE_DIR",
                      help="a finished crate the port may use, copied in and frozen (repeatable)")
+    run.add_argument("--seed", action="append", metavar="NAME=DIR",
+                     help="earlier code agents may start from, copied to seed/NAME, not frozen (repeatable)")
     run.add_argument("--strict-bindings", action="store_true",
                      help="for ports of Python's built-ins: the PyO3 layer can't call into Python")
     run.add_argument("--max-agents", type=int)
