@@ -10,6 +10,7 @@ Decimal or Fraction, raises TypeError. Those types bring their own formatting an
 arithmetic from their own modules, which this package doesn't cover.
 """
 
+import _string
 import functools as _functools
 
 __all__ = [
@@ -49,9 +50,35 @@ def format_value(value, spec):
     return format(value, spec)
 
 
+def _refuse_attribute_fields(template, depth=0):
+    """Raise TypeError if a replacement field reads an attribute, as in ``{0.real}``.
+
+    Attribute lookups reach Python's object model (``{0.__class__.__doc__}`` is int's
+    docstring), which a port over plain values can't reproduce. Fields are scanned in
+    order, including fields nested in format specs. A template Python can't parse is
+    left for ``str.format`` to reject.
+    """
+    try:
+        fields = list(_string.formatter_parser(template))
+    except ValueError:
+        return
+    for _literal, field, spec, _conversion in fields:
+        if field is not None:
+            try:
+                for is_attribute, _name in _string.formatter_field_name_split(field)[1]:
+                    if is_attribute:
+                        raise TypeError("pc_format doesn't support attribute access in format fields")
+            except ValueError:
+                pass
+        if spec and depth < 1:
+            _refuse_attribute_fields(spec, depth + 1)
+
+
 @_builtins_only
 def str_format(template, args=(), kwargs=None):
-    """``template.format(*args, **kwargs)``."""
+    """``template.format(*args, **kwargs)``, without attribute access in fields."""
+    if type(template) is str:
+        _refuse_attribute_fields(template)
     return template.format(*args, **(kwargs or {}))
 
 
