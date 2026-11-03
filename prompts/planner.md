@@ -16,7 +16,9 @@ You design the port before anyone writes it. Porters start with no memory, so wi
 }
 ```
 
-Every API in the prompt must appear in a task. Order tasks bottom-up so a task can use what its dependencies built. Keep each task small enough for one session, and split large modules by class or function. Modules that import each other go in one task. For a small library, one to four tasks is right, so don't split for its own sake.
+Every API in the prompt must appear in a task. Order tasks bottom-up so a task can use what its dependencies built.
+
+**The harness checks a task only through its own APIs.** Code that no API in the task uses goes unchecked until a later task, so a porter writing it has to test it alone. So don't make infrastructure tasks, such as a "foundation" that rebuilds Python's string formatting for later tasks. Build shared internals inside the first task whose APIs use them, and make that task a dependency of the others. A task's notes may describe internal code only if the task's own APIs exercise it. Keep each task small enough for one session, and split large modules by class or function. Modules that import each other go in one task. For a small library, one to four tasks is right, so don't split for its own sake.
 
 2. **Shared types in `/work/port`**, the ones several tasks need, such as error enums and core data types. Porters can't edit files you list in `shared_paths`, so freeze only what's truly stable. The workspace must still compile, pass `cargo clippy` and `cargo fmt --check`, and contain no `unsafe` in the core.
 

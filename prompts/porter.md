@@ -17,4 +17,6 @@ You translate one task's APIs from Python to Rust, in `/work/port`. Port the beh
 - `cargo fmt`, and pass Clippy with `-D warnings -D clippy::unwrap_used -D clippy::expect_used -D clippy::panic -D clippy::allow_attributes_without_reason`.
 - The logic must be Rust. Don't import the original library, or `re`, from the PyO3 layer, and don't embed or run Python source.
 - Add Rust unit tests for core logic when they help you, but they don't replace the checks.
+- The check command is your test harness. Don't build your own comparison tool: it lacks the checks' isolation and limits, and the harness rejudges your work anyway. If you're asked to write code your task's checks can't reach, build only what your APIs need, and say in your notes that the plan needs fixing.
+- Keep scratch probes small, a few hundred inputs at most. Your container's memory is capped, and a probe over the cap is killed. Python will try to build strings as wide as any width you give it.
 - Stay within your task. Other tasks may be running at once, so avoid reformatting unrelated files. Files listed in `shared_paths` are frozen.
