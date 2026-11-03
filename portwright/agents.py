@@ -20,7 +20,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 PROMPTS = REPO_ROOT / "prompts"
 SKILLS = REPO_ROOT / "skills"
 _LIMIT_TEXT = re.compile(r"usage limit|limit reached|hit your .*limit|rate.?limit|too many requests|overloaded|out of extra usage", re.I)
-_AUTH_TEXT = re.compile(r"not logged in|invalid api key|authentication_error|oauth token .*expired|please run /login", re.I)
+_AUTH_TEXT = re.compile(r"not logged in|invalid api key|authentication_error|failed to authenticate|oauth token .*(expired|revoked)|please run /login", re.I)
 
 
 class LimitReached(RuntimeError):

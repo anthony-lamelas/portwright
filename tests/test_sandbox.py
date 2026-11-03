@@ -131,3 +131,15 @@ def test_container_has_no_network_except_the_proxy():
     assert "blocked:200" not in output, output
     assert "Read-only" in output, output
     assert "github.com:443" in denied, (output, denied)
+
+
+@pytest.mark.parametrize("text", [
+    "Failed to authenticate: OAuth token revoked. Please log in again or contact your administrator.",
+    "OAuth token has expired",
+    "Not logged in. Please run /login",
+])
+def test_login_failures_are_recognized(text):
+    """A revoked token cost a design attempt instead of pausing for a fresh login."""
+    from portwright.agents import _AUTH_TEXT
+
+    assert _AUTH_TEXT.search(text)
