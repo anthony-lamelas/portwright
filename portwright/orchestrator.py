@@ -6,14 +6,14 @@ import json
 import shutil
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from portwright.agents import AgentResult, AgentSession, Backend, LimitReached
 from portwright.evaluation import Project, Verification, add_regressions, differential_for, verify
 from portwright.gates import GateResult
 from portwright.gates.bench import load_benchmarks, performance_gate, run_benchmarks, run_native_benchmarks, speedups
-from portwright.gates.canaries import canary_gate
+from portwright.gates.canaries import canary_gate, load_written_canaries
 from portwright.gates.coverage import coverage_gate, rust_coverage
 from portwright.gates.differential import self_comparison_gate
 from portwright.gates.fuzz import fuzz_gate
@@ -69,6 +69,13 @@ class Config:
     session_timeout: float = 2 * 60 * 60
     model: str | None = None
     seed: int = 20261101
+    # Hand-written planted bugs, relative to ``source``. Never shown to agents.
+    canaries_path: str | None = None
+    # One line for the report, such as what the original really is for a shim.
+    reference_note: str = ""
+    # Finished Rust crates this port may use: name -> crate directory. Copied into
+    # vendor/<name> and frozen, so the port ships with exactly what it was checked against.
+    vendor: dict = field(default_factory=dict)
 
 
 class Porter:
@@ -268,11 +275,41 @@ class Porter:
         self._record(baseline)
         if not baseline.passed:
             raise RunStopped(f"the original's own tests don't pass here: {baseline.summary}")
+        written = self.paths.control / "canaries"
+        if written.exists():
+            shutil.rmtree(written)
+        if config.canaries_path:
+            shutil.copytree(source / config.canaries_path, written)
         if not self.paths.port.exists() or not (self.paths.port / ".git").exists():
             write_scaffold(self.paths.port, config.lib, config.module, license_text, config.url, commit)
+            self._vendor_crates()
             init_repo(self.paths.port)
         self.run_state.update(lambda d: d.update(commit=commit, holdout_count=len(holdouts)))
         self._log(f"  {len(api)} public APIs, {len(holdouts)} tests held back, commit {commit[:9]}")
+
+    def _vendor_crates(self) -> None:
+        """Copy finished crates into vendor/ and freeze them. Cargo makes a path
+        dependency inside the workspace a member, so it is built and linted with the port."""
+        frozen = {}
+        for name, crate in self.config.vendor.items():
+            destination = self.paths.port / "vendor" / name
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(Path(crate), destination, ignore=shutil.ignore_patterns("target", ".git"))
+            frozen.update({f"vendor/{name}/{key}": value for key, value in hash_tree(destination).items()})
+        if frozen:
+            self.run_state.update(lambda d: d["shared"].update(frozen))
+
+    def _vendor_note(self) -> str:
+        if not self.config.vendor:
+            return ""
+        names = ", ".join(f"`vendor/{name}`" for name in self.config.vendor)
+        return (
+            f"\n\nAlready-ported building blocks are in {names}: finished crates that match Python 3.12 "
+            "exactly and passed their own gates. Use them through a path dependency instead of rebuilding "
+            "what they do. Read their README and CONFORMANCE.md first. They're frozen; if one is missing "
+            "something, file a request."
+        )
 
     # ---------------------------------------------------------------- 2. checks
 
@@ -289,6 +326,9 @@ class Porter:
                 self.paths.checks, self.paths.upstream_src, config.module,
                 minimum=config.canary_minimum, sample=config.canary_sample, seed=config.seed,
                 max_examples=config.canary_examples, workers=8,
+                written=load_written_canaries(
+                    self.paths.control / "canaries", f"{Path(config.package_path).name}/__init__.py"
+                ) if config.canaries_path else None,
             )
         )
         feedback = []
@@ -363,6 +403,7 @@ class Porter:
                 f"Plan the port of `{self.config.module}`. Every one of these APIs must be in a task:\n"
                 + "\n".join(self.api)
                 + "\n\nWrite /work/out/plan.json and shared types in /work/port as your role says."
+                + self._vendor_note()
             )
             if feedback:
                 prompt += f"\n\nProblems with your last attempt:\n{feedback}"
@@ -399,7 +440,9 @@ class Porter:
                     import hashlib
 
                     shared[relative] = hashlib.sha256(path.read_bytes()).hexdigest()
-            self.run_state.update(lambda d: d.update(shared=shared))
+            # Vendored crates stay frozen whatever the plan says.
+            self.run_state.update(lambda d: d.update(shared={
+                **{k: v for k, v in d["shared"].items() if k.startswith("vendor/")}, **shared}))
             self.workspaces.discard(name)
             return
         raise RunStopped(f"no valid plan after {self.config.design_rounds + 1} attempts: {feedback[:500]}")
@@ -413,6 +456,8 @@ class Porter:
         ]
         if task.get("notes"):
             parts.append(f"Planner's notes: {task['notes']}")
+        if self.config.vendor:
+            parts.append(self._vendor_note().strip())
         if task.get("failure"):
             parts.append(f"The harness rejected the last attempt:\n{task['failure']}")
         tried = self.paths.public / "tried" / f"{task_id}.md"

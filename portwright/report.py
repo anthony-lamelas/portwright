@@ -45,6 +45,7 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
         "**Experimental, unofficial Rust port. Not affiliated with or endorsed by the original authors, and not actively maintained.**",
         f"- **Original:** {config.url} at commit `{state.get('commit', 'unknown')}`",
         f"- **Result:** {result}",
+        *([f"- **What the original is:** {config.reference_note}"] if getattr(config, "reference_note", "") else []),
         "\nThis report shows the port matched the original on the inputs tested. It doesn't prove the two are equivalent.",
     ]
     if reasons:
@@ -58,8 +59,12 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
     canaries = gates.get("canaries", {}).get("details", {})
     mutation = gates.get("rust_mutation", {}).get("details", {})
     parts.append("## Bugs the checks didn't catch\nPlanted bugs that went unnoticed are blind spots in this report.")
-    parts.append("**In copies of the Python:**\n" + _list_or_none(
-        [f"`{item['file']}:{item['line']}`: {item['bug']}" for item in canaries.get("missed", [])]))
+    if getattr(config, "canaries_path", None):
+        parts.append("**Hand-written planted bugs** (the original's logic is C, so there was no Python to plant bugs in):\n"
+                     + _list_or_none([item["bug"] for item in canaries.get("missed", [])]))
+    else:
+        parts.append("**In copies of the Python:**\n" + _list_or_none(
+            [f"`{item['file']}:{item['line']}`: {item['bug']}" for item in canaries.get("missed", [])]))
     parts.append("**In the Rust:**\n" + _list_or_none(
         [f"`{item['file']}:{item['line']}` in `{item['function']}`: {item['change']}" for item in mutation.get("missed", [])]))
 

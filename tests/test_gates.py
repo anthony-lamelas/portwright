@@ -80,3 +80,44 @@ def test_weak_checks_fail_the_canary_gate():
     result = canary_gate(WEAK, TEXTKIT, "textkit", minimum=0.5, sample=15, max_examples=10, workers=8)
     assert not result.passed, result.summary
     assert result.details["missed"]
+
+
+def test_hand_written_canaries_replace_ast_mutants(tmp_path):
+    from portwright.gates.canaries import load_written_canaries
+
+    (tmp_path / "001-upper.py").write_text(
+        "# canary: slug keeps capitals\n_slug = slug\ndef slug(text, max_len=None, sep='-'):\n"
+        "    return _slug(text, max_len, sep).upper()\n"
+    )
+    (tmp_path / "002-noop.py").write_text("# canary: changes nothing\n_unused = 1\n")
+    written = load_written_canaries(tmp_path, "textkit/__init__.py")
+    assert [m.description for m in written] == ["001-upper: slug keeps capitals", "002-noop: changes nothing"]
+    result = canary_gate(GOOD, TEXTKIT, "textkit", minimum=0.5, max_examples=30, workers=2, written=written)
+    assert result.details["caught"] == 1
+    assert [m["bug"] for m in result.details["missed"]] == ["002-noop: changes nothing"]
+    assert "hand-written" in result.summary
+
+
+def test_vendored_crates_are_copied_in_and_frozen(tmp_path):
+    from portwright.evaluation import _shared_problems
+    from portwright.orchestrator import Config, Porter
+
+    crate = tmp_path / "pycompat-fmt"
+    (crate / "src").mkdir(parents=True)
+    (crate / "Cargo.toml").write_text('[package]\nname = "pycompat-fmt"\nversion = "0.1.0"\nedition = "2021"\n')
+    (crate / "src" / "lib.rs").write_text("pub fn f() {}\n")
+    (crate / "target").mkdir()
+    (crate / "target" / "junk").write_text("x")
+    config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u",
+                    run_dir=tmp_path / "run", vendor={"pycompat-fmt": str(crate)})
+    porter = Porter(config, None)
+    porter.paths.port.mkdir(parents=True)
+    porter._vendor_crates()
+    vendored = porter.paths.port / "vendor" / "pycompat-fmt"
+    assert (vendored / "src" / "lib.rs").exists() and not (vendored / "target").exists()
+    shared = porter.run_state.read()["shared"]
+    assert set(shared) == {"vendor/pycompat-fmt/Cargo.toml", "vendor/pycompat-fmt/src/lib.rs"}
+    assert _shared_problems(porter.paths.port, shared) == []
+    (vendored / "src" / "lib.rs").write_text("pub fn g() {}\n")
+    assert _shared_problems(porter.paths.port, shared) == ["vendor/pycompat-fmt/src/lib.rs is frozen and can't be changed; file a request instead"]
+    assert "vendor/pycompat-fmt" in porter._vendor_note()

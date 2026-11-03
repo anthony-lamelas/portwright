@@ -38,7 +38,10 @@ def _load_or_create_config(options) -> Config:
         config = Config(
             lib=options.lib, module=options.module, source=Path(options.source).resolve(),
             package_path=options.package, tests_path=options.tests, url=options.url, run_dir=run_dir,
+            canaries_path=options.canaries, reference_note=options.reference_note or "",
+            vendor=dict(item.split("=", 1) for item in options.vendor or []),
         )
+        config.vendor = {name: str(Path(path).resolve()) for name, path in config.vendor.items()}
     if options.max_agents:
         config.max_agents = options.max_agents
     if options.model:
@@ -118,6 +121,10 @@ def main(argv=None) -> int:
     run.add_argument("--tests", help="tests path inside the clone")
     run.add_argument("--url")
     run.add_argument("--auth", default=SUBSCRIPTION, choices=["subscription", "api_key"])
+    run.add_argument("--canaries", help="hand-written planted bugs inside the clone, kept from agents")
+    run.add_argument("--reference-note", help="what the original really is, for the report")
+    run.add_argument("--vendor", action="append", metavar="NAME=CRATE_DIR",
+                     help="a finished crate the port may use, copied in and frozen (repeatable)")
     run.add_argument("--max-agents", type=int)
     run.add_argument("--model")
     run.add_argument("--wait", action="store_true", help="wait out usage limits instead of pausing")

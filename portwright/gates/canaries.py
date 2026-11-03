@@ -37,6 +37,24 @@ class Mutant:
     node_index: int
     line: int
     description: str
+    snippet: str = ""  # a hand-written bug, appended to ``file`` instead of an AST change
+
+
+def load_written_canaries(canaries_dir: str | Path, target_file: str = "__init__.py") -> list[Mutant]:
+    """Load hand-written planted bugs: one ``.py`` file each, first line ``# canary: <what>``.
+
+    For a library whose logic lives in C, such as a shim over Python's built-ins,
+    changing the Python finds almost nothing to plant. These rebind an API with a
+    wrapper that is wrong only for some inputs, and the checks must notice. They're
+    kept outside the package, so no agent sees them.
+    """
+    mutants = []
+    for index, path in enumerate(sorted(Path(canaries_dir).glob("*.py"))):
+        text = path.read_text(encoding="utf-8")
+        first = text.splitlines()[0] if text else ""
+        description = first.removeprefix("# canary:").strip() if first.startswith("# canary:") else path.stem
+        mutants.append(Mutant(target_file, index, 0, f"{path.stem}: {description}", snippet=text))
+    return mutants
 
 
 def _docstring_nodes(tree) -> set[int]:
@@ -161,6 +179,9 @@ def build_mutant(source_dir: str | Path, mutant: Mutant, target_dir: str | Path)
     """Copy the library to ``target_dir`` with one bug planted."""
     shutil.copytree(source_dir, target_dir, dirs_exist_ok=True)
     path = Path(target_dir) / mutant.file
+    if mutant.snippet:
+        path.write_text(path.read_text(encoding="utf-8") + "\n\n" + mutant.snippet + "\n", encoding="utf-8")
+        return
     tree = ast.parse(path.read_text(encoding="utf-8"))
     _apply(tree, mutant.node_index)
     path.write_text(ast.unparse(tree), encoding="utf-8")
@@ -196,15 +217,19 @@ def canary_gate(
     max_examples: int = 100,
     timeout: float = 5.0,
     workers: int = 4,
+    written: list[Mutant] | None = None,
 ) -> GateResult:
-    """Fail if the checks catch too small a share of planted bugs."""
+    """Fail if the checks catch too small a share of planted bugs.
+
+    With ``written``, only those hand-written bugs are used, all of them.
+    """
     import sys
 
     python = python or sys.executable
     source_dir = Path(source_dir).resolve()
     checks_dir = Path(checks_dir).resolve()
-    mutants = list_mutants(source_dir)
-    if sample is not None and sample < len(mutants):
+    mutants = list(written) if written else list_mutants(source_dir)
+    if not written and sample is not None and sample < len(mutants):
         mutants = sorted(random.Random(seed).sample(mutants, sample), key=lambda m: (m.file, m.line))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = list(
@@ -225,5 +250,6 @@ def canary_gate(
         "missed": [{"file": m.file, "line": m.line, "bug": m.description} for m in missed],
     }
     passed = viable > 0 and score >= minimum
-    summary = f"caught {len(caught)}/{viable} planted bugs ({score:.0%}, minimum {minimum:.0%})"
+    kind = "hand-written planted bugs" if written else "planted bugs"
+    summary = f"caught {len(caught)}/{viable} {kind} ({score:.0%}, minimum {minimum:.0%})"
     return GateResult("canaries", passed, summary, details)
