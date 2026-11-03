@@ -183,3 +183,15 @@ def test_cleanup_hears_about_rust_the_checks_never_run(tmp_path):
     assert "object.rs: the checks run 39% of its lines and 17/33 functions" in hints
     assert "table.rs: no code the checks can run" in hints
     assert "lib.rs" not in hints
+
+
+def test_notes_repeated_by_retries_are_kept_once(tmp_path):
+    from portwright.state import append_capped
+
+    path = tmp_path / "upstream_bugs.md"
+    note = "# names\n- lookup is case-sensitive for HANGUL SYLLABLE\n"
+    for _ in range(4):
+        append_capped(path, note)
+    append_capped(path, "# other\n- something new\n")
+    text = path.read_text()
+    assert text.count("case-sensitive") == 1 and "something new" in text

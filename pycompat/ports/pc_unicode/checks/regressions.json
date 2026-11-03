@@ -1,0 +1,50 @@
+[
+ {
+  "target": "upper",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('functools').reduce(lambda x, i: (x,), range(901), 1)"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "category",
+  "args": [
+   {
+    "t": "python",
+    "v": "{__import__('decimal').Decimal(1): __import__('functools').reduce(lambda x, i: (x,), range(950), 1)}"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "split",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('decimal').Decimal(1)"
+   },
+   {
+    "t": "python",
+    "v": "__import__('functools').reduce(lambda x, i: [x], range(950), 1)"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "center",
+  "args": [
+   {
+    "t": "python",
+    "v": "object()"
+   },
+   {
+    "t": "python",
+    "v": "__import__('functools').reduce(lambda x, i: (x,), range(2000), 1)"
+   }
+  ],
+  "kwargs": {}
+ }
+]

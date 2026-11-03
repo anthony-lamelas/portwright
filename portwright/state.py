@@ -62,6 +62,8 @@ class JsonStore:
 def append_capped(path: str | Path, text: str, max_lines: int = 200) -> None:
     """Add notes, keeping only the newest lines, so notes can't flood agent context."""
     path = Path(path)
+    if path.exists() and text.strip() and text.strip() in path.read_text(encoding="utf-8"):
+        return  # each retry repeats its notes; once is enough
     existing = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
     lines = existing + text.strip().splitlines()
     atomic_write(path, "\n".join(lines[-max_lines:]) + "\n")

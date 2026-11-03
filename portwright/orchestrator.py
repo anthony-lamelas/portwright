@@ -847,6 +847,9 @@ class Porter:
         self.run_state.update(lambda d: d.update(shared={k: v for k, v in d["shared"].items() if not k.startswith("crates/")}))
 
     def _phase_fix_review(self) -> None:
+        self._fix_review_findings("review")
+
+    def _fix_review_findings(self, stage: str) -> None:
         """Turn the reviewer's behavior findings into checks, then fix the Rust against them.
 
         The Python still decides every expected answer, so a wrong finding can't make
@@ -857,7 +860,7 @@ class Porter:
             return
         self._unfreeze_shared_code()
         self._agent(
-            "test_writer", "review-checks",
+            "test_writer", f"{stage}-checks",
             "Stage: review findings. A reviewer read the Rust port and reported the problems below. For each "
             "finding that claims the port *behaves* differently from the original (crashes, wrong results, "
             "different errors, unsupported inputs), add inputs to /work/checks that reach it, so the comparison "
@@ -867,12 +870,12 @@ class Porter:
         )
         self_check = self._record(
             self_comparison_gate(self.paths.checks, self.reference, api=self.api, seed=self.config.seed, max_examples=self.config.examples),
-            "self_comparison_after_review",
+            f"self_comparison_after_{stage}",
         )
         if not self_check.passed:
             raise RunStopped(f"the checks added for review findings don't agree with themselves: {self_check.summary}")
         self._lock_checks()
-        self._fix_until("review", self._verify_main, "New checks reproduce problems a reviewer found. Fix the Rust so the port matches the original.")
+        self._fix_until(stage, self._verify_main, "New checks reproduce problems a reviewer found. Fix the Rust so the port matches the original.")
 
     def _phase_cleanup(self) -> None:
         self._unfreeze_shared_code()
@@ -919,7 +922,10 @@ class Porter:
     # ---------------------------------------------------------------- 7. final review and report
 
     def _phase_final_review(self) -> None:
+        # Both pycompat final reviews confirmed a behavior difference after the last fix
+        # round, so it could only be reported. Their findings now get one more round.
         self._review("final")
+        self._fix_review_findings("final_review")
 
     def _phase_report(self) -> None:
         state = self.run_state.read()

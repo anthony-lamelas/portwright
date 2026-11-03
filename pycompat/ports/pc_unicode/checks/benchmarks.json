@@ -1,0 +1,12 @@
+[
+ {"name": "normalize_nfkc_mixed", "target": "normalize", "args": ["NFKC", "Ｈｅｌｌｏ ﬁｎｅ ①②③ Å각 ẛ̣ ﷺ café naïve 日本語テキスト ｶﾞ ⑴⒜ — the quick brown fox jumps over the lazy dog. Ｈｅｌｌｏ ﬁｎｅ ①②③ Å각 ẛ̣"], "kwargs": {}},
+ {"name": "normalize_nfd_hangul", "target": "normalize", "args": ["NFD", "한국어 텍스트를 정규화합니다. 가나다라마바사아자차카타파하 각낙닥락막박삭악작착칵탁팍학"], "kwargs": {}},
+ {"name": "casefold_paragraph", "target": "casefold", "args": ["Straße ΣΑΣ İstanbul ǅemal ﬁnal ΐ ᾳ ẞ The Quick Brown Fox Jumps Over The Lazy Dog ΣΟΦΊΑ Ꭰꭰ 𐐀𐐨"], "kwargs": {}},
+ {"name": "title_sentence", "target": "title", "args": ["they're bill's friends from the uk; ǆungla ŉ ﬂoor ΣΑΣ ὈΔΥΣΣΕΎΣ 1st 2nd 3rd hello-world_foo"], "kwargs": {}},
+ {"name": "split_whitespace", "target": "split", "args": ["  alpha\tbeta\ngamma　delta epsilon\u0085zeta  eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau  "], "kwargs": {}},
+ {"name": "splitlines_keepends", "target": "splitlines", "args": ["line one\nline two\r\nline three\rline four\u000bfive\u000csix\u001cseven\u0085eight nine ten\n", true], "kwargs": {}},
+ {"name": "lookup_hangul", "target": "lookup", "args": ["HANGUL SYLLABLE KKWAELH"], "kwargs": {}},
+ {"name": "char_name_cjk", "target": "char_name", "args": ["鿿"], "kwargs": {}},
+ {"name": "is_normalized_nfc_ascii", "target": "is_normalized", "args": ["NFC", "plain ascii text that is already normalized and fairly long to exercise the quick check path"], "kwargs": {}},
+ {"name": "expandtabs_table", "target": "expandtabs", "args": ["name\tage\tcity\nalice\t30\tparis\nbob\t4\tnew york\n日本\t1\t東京", 4], "kwargs": {}}
+]

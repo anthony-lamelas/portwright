@@ -1,0 +1,325 @@
+[package]
+name = "pc-unicode-port-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = "1"
+num-bigint = "0.4"
+
+[dependencies.pc-unicode-port-core]
+path = "../crates/pc-unicode-port-core"
+
+# Keep this crate out of any parent workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "bidirectional"
+path = "fuzz_targets/bidirectional.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "call_bind"
+path = "fuzz_targets/call_bind.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "capitalize"
+path = "fuzz_targets/capitalize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "casefold"
+path = "fuzz_targets/casefold.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "category"
+path = "fuzz_targets/category.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "center"
+path = "fuzz_targets/center.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "char_name"
+path = "fuzz_targets/char_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "combining"
+path = "fuzz_targets/combining.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decimal_value"
+path = "fuzz_targets/decimal_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decomposition"
+path = "fuzz_targets/decomposition.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "digit_value"
+path = "fuzz_targets/digit_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "east_asian_width"
+path = "fuzz_targets/east_asian_width.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "expandtabs"
+path = "fuzz_targets/expandtabs.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "is_normalized"
+path = "fuzz_targets/is_normalized.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isalnum"
+path = "fuzz_targets/isalnum.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isalpha"
+path = "fuzz_targets/isalpha.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isascii"
+path = "fuzz_targets/isascii.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isdecimal"
+path = "fuzz_targets/isdecimal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isdigit"
+path = "fuzz_targets/isdigit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isidentifier"
+path = "fuzz_targets/isidentifier.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "islower"
+path = "fuzz_targets/islower.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isnumeric"
+path = "fuzz_targets/isnumeric.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isprintable"
+path = "fuzz_targets/isprintable.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isspace"
+path = "fuzz_targets/isspace.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "istitle"
+path = "fuzz_targets/istitle.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isupper"
+path = "fuzz_targets/isupper.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "ljust"
+path = "fuzz_targets/ljust.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lookup"
+path = "fuzz_targets/lookup.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lower"
+path = "fuzz_targets/lower.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "lstrip"
+path = "fuzz_targets/lstrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "mirrored"
+path = "fuzz_targets/mirrored.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "normalize"
+path = "fuzz_targets/normalize.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "numeric_value"
+path = "fuzz_targets/numeric_value.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rjust"
+path = "fuzz_targets/rjust.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rsplit"
+path = "fuzz_targets/rsplit.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rstrip"
+path = "fuzz_targets/rstrip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "split"
+path = "fuzz_targets/split.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "splitlines"
+path = "fuzz_targets/splitlines.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strip"
+path = "fuzz_targets/strip.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "swapcase"
+path = "fuzz_targets/swapcase.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "title"
+path = "fuzz_targets/title.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "upper"
+path = "fuzz_targets/upper.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "zfill"
+path = "fuzz_targets/zfill.rs"
+test = false
+doc = false
+bench = false
