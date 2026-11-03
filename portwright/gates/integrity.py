@@ -27,6 +27,12 @@ _EXEC_PATTERNS = {
     "embeds Python source": re.compile(r'include_(?:str|bytes)!\s*\(\s*"[^"]*\.py"'),
 }
 _SKIP = {"target", ".git"}
+# For a port of Python's own built-ins, these would run CPython's code instead of the
+# port's: repr() and str() of a Python object, calling its methods, or reading attributes.
+_PYTHON_DISPATCH = re.compile(r"\.(?:repr|str|call_method\w*|call[01]?|getattr|setattr|hasattr)\s*\(\s*(?:\"([^\"]*)\")?")
+# Calls that only move data across the boundary. Encoding with surrogatepass is how a
+# string holding lone surrogates crosses into Rust; __setitem__ writes a result back.
+_CONVERSION_METHODS = {"encode", "decode", "__setitem__", "__len__", "append", "extend", "clear", "items", "keys", "values"}
 
 
 def hash_tree(path: str | Path) -> dict[str, str]:
@@ -71,10 +77,15 @@ def integrity_gate(
     core_crate: str,
     locked: dict[str, dict[str, dict[str, str]]] | None = None,
     approved_crates: set[str] | None = None,
+    strict_bindings: bool = False,
+    bindings_dir: str | None = None,
 ) -> GateResult:
     """Fail on any sign the port depends on Python logic instead of implementing it.
 
     ``locked`` maps a label to ``{"path": ..., "hashes": ...}`` for files that mustn't change.
+    With ``strict_bindings``, the crate in ``bindings_dir`` may only convert values and
+    raise exceptions: no Python imports and no calls into Python objects. Ports of
+    Python's built-ins need this, or the bindings could hand the work back to CPython.
     """
     workspace = Path(workspace)
     problems: list[str] = []
@@ -120,6 +131,15 @@ def integrity_gate(
         for label, pattern in _EXEC_PATTERNS.items():
             if pattern.search(text):
                 problems.append(f"{relative}: {label}")
+        if strict_bindings and bindings_dir and Path(bindings_dir) in relative.parents:
+            for number, line in enumerate(text.splitlines(), 1):
+                code = line.split("//", 1)[0]
+                calls = [m for m in _PYTHON_DISPATCH.finditer(code) if m.group(1) not in _CONVERSION_METHODS]
+                if calls or _IMPORT.search(code):
+                    problems.append(
+                        f"{relative}:{number}: the bindings may only convert values and raise exceptions; "
+                        f"this calls into Python: {code.strip()[:120]}"
+                    )
 
     for label, lock in (locked or {}).items():
         changed = changed_files(lock["hashes"], hash_tree(lock["path"]))

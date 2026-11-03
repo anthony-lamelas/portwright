@@ -35,6 +35,7 @@ class Project:
     shared: dict = field(default_factory=dict)  # relative path to hash; porters can't change these
     approved_differences: list = field(default_factory=list)
     approved_crates: list = field(default_factory=list)
+    strict_bindings: bool = False
 
     @property
     def py_path(self) -> str:
@@ -146,6 +147,7 @@ def verify(
     integrity = integrity_gate(
         workspace, project.module, core_crate=project.core_crate,
         locked=project.locked, approved_crates=set(project.approved_crates),
+        strict_bindings=project.strict_bindings, bindings_dir=project.py_path,
     )
     shared = _shared_problems(workspace, project.shared)
     if shared:

@@ -76,6 +76,9 @@ class Config:
     # Finished Rust crates this port may use: name -> crate directory. Copied into
     # vendor/<name> and frozen, so the port ships with exactly what it was checked against.
     vendor: dict = field(default_factory=dict)
+    # For ports of Python's built-ins: the PyO3 layer may only convert values and raise
+    # exceptions, so it can't hand the work back to CPython.
+    strict_bindings: bool = False
 
 
 class Porter:
@@ -151,6 +154,7 @@ class Porter:
             locked=locked, shared=state["shared"],
             approved_differences=state["approved_differences"],
             approved_crates=state["approved_crates"],
+            strict_bindings=self.config.strict_bindings,
         )
 
     def _target(self, name: str) -> Path:
@@ -169,6 +173,7 @@ class Porter:
             "apis": apis, "coverage_minimum": self.config.coverage_minimum,
             "approved_differences": state["approved_differences"],
             "approved_crates": state["approved_crates"], "shared": state["shared"],
+            "strict_bindings": self.config.strict_bindings,
         }
 
     def _agent(self, role: str, label: str, prompt: str, mounts: dict[str, str], apis=None) -> AgentResult:
@@ -301,10 +306,18 @@ class Porter:
             self.run_state.update(lambda d: d["shared"].update(frozen))
 
     def _vendor_note(self) -> str:
+        note = ""
+        if self.config.strict_bindings:
+            note += (
+                "\n\nThis library is a shim over Python's built-ins, so the PyO3 crate must stay thin: it may only "
+                "convert arguments and results and raise exceptions. It can't import any Python module, or call "
+                "repr(), str(), methods or attributes of Python objects, because that would run CPython's code "
+                "instead of the port's. Build every behavior, including reprs and error messages, in the core."
+            )
         if not self.config.vendor:
-            return ""
+            return note
         names = ", ".join(f"`vendor/{name}`" for name in self.config.vendor)
-        return (
+        return note + (
             f"\n\nAlready-ported building blocks are in {names}: finished crates that match Python 3.12 "
             "exactly and passed their own gates. Use them through a path dependency instead of rebuilding "
             "what they do. Read their README and CONFORMANCE.md first. They're frozen; if one is missing "
@@ -456,7 +469,7 @@ class Porter:
         ]
         if task.get("notes"):
             parts.append(f"Planner's notes: {task['notes']}")
-        if self.config.vendor:
+        if self._vendor_note():
             parts.append(self._vendor_note().strip())
         if task.get("failure"):
             parts.append(f"The harness rejected the last attempt:\n{task['failure']}")

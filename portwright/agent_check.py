@@ -38,7 +38,7 @@ def main() -> int:
         module=config["module"], lib=config["lib"], core_crate=config["core_crate"], py_crate=config["py_crate"],
         reference=reference, checks="/work/checks", tests_visible="/work/upstream/tests",
         approved_differences=config.get("approved_differences", []), approved_crates=config.get("approved_crates", []),
-        shared=config.get("shared", {}),
+        shared=config.get("shared", {}), strict_bindings=config.get("strict_bindings", False),
     )
     apis = sys.argv[2:] or config.get("apis")
     result = verify(

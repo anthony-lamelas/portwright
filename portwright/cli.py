@@ -40,10 +40,13 @@ def _load_or_create_config(options) -> Config:
             package_path=options.package, tests_path=options.tests, url=options.url, run_dir=run_dir,
             canaries_path=options.canaries, reference_note=options.reference_note or "",
             vendor=dict(item.split("=", 1) for item in options.vendor or []),
+            strict_bindings=options.strict_bindings,
         )
         config.vendor = {name: str(Path(path).resolve()) for name, path in config.vendor.items()}
     if options.max_agents:
         config.max_agents = options.max_agents
+    if options.strict_bindings:  # can be turned on for a run already started, never off
+        config.strict_bindings = True
     if options.model:
         config.model = options.model
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -125,6 +128,8 @@ def main(argv=None) -> int:
     run.add_argument("--reference-note", help="what the original really is, for the report")
     run.add_argument("--vendor", action="append", metavar="NAME=CRATE_DIR",
                      help="a finished crate the port may use, copied in and frozen (repeatable)")
+    run.add_argument("--strict-bindings", action="store_true",
+                     help="for ports of Python's built-ins: the PyO3 layer can't call into Python")
     run.add_argument("--max-agents", type=int)
     run.add_argument("--model")
     run.add_argument("--wait", action="store_true", help="wait out usage limits instead of pausing")

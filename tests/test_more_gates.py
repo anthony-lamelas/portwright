@@ -318,3 +318,27 @@ def test_frozen_top_level_files_are_compared_not_always_flagged(tmp_path):
     assert _shared_problems(tmp_path, shared) == []
     (tmp_path / "Cargo.toml").write_text("[workspace]\nmembers = []\n")
     assert _shared_problems(tmp_path, shared) == ["Cargo.toml is frozen and can't be changed; file a request instead"]
+
+
+@pytest.mark.parametrize("insert", [
+    "fn a(x: &Bound<'_, PyAny>) -> PyResult<()> { let _ = x.repr()?; Ok(()) }",
+    "fn a(x: &Bound<'_, PyAny>) -> PyResult<()> { let _ = x.call_method1(\"__format__\", (\"x\",))?; Ok(()) }",
+    "fn a(x: &Bound<'_, PyAny>) -> PyResult<()> { let _ = x.getattr(\"real\")?; Ok(()) }",
+    "fn a(py: Python<'_>) { let _ = py.import(\"builtins\"); }",
+])
+def test_strict_bindings_reject_calls_back_into_python(tmp_path, insert):
+    port = make_port(tmp_path)
+    source = port / "crates/textkit-py/src/lib.rs"
+    source.write_text(source.read_text() + "\n" + insert + "\n")
+    strict = check_integrity(port, strict_bindings=True, bindings_dir="crates/textkit-py")
+    assert any("calls into Python" in problem for problem in strict.details["problems"]), strict.details
+    relaxed = check_integrity(port, bindings_dir="crates/textkit-py")
+    assert not any("calls into Python" in problem for problem in relaxed.details["problems"])
+
+
+def test_strict_bindings_leave_the_core_free_to_name_its_own_repr(tmp_path):
+    port = make_port(tmp_path)
+    core = port / "crates/textkit-core/src/lib.rs"
+    core.write_text(core.read_text() + "\npub fn show(x: &Thing) -> String { x.repr() }\npub struct Thing;\nimpl Thing { pub fn repr(&self) -> String { String::new() } }\n")
+    result = check_integrity(port, strict_bindings=True, bindings_dir="crates/textkit-py")
+    assert not any("calls into Python" in problem for problem in result.details["problems"])
