@@ -248,7 +248,10 @@ def canary_gate(
     caught = [m for m, verdict in outcomes if verdict == "caught"]
     missed = [m for m, verdict in outcomes if verdict == "missed"]
     not_viable = [m for m, verdict in outcomes if verdict == "not_viable"]
-    viable = len(caught) + len(missed)
+    # A generated mutant can be unviable (it breaks the import, say). A hand-written
+    # bug is known to apply, so when it can't be judged the checks themselves broke,
+    # and it counts against the score instead of quietly leaving the total.
+    viable = len(caught) + len(missed) + (len(not_viable) if written else 0)
     score = len(caught) / viable if viable else 0.0
     details = {
         "score": score,
@@ -256,7 +259,11 @@ def canary_gate(
         "not_viable": len(not_viable),
         "missed": [{"file": m.file, "line": m.line, "bug": m.description} for m in missed],
     }
+    if written:
+        details["not_judged"] = [{"file": m.file, "bug": m.description} for m in not_viable]
     passed = viable > 0 and score >= minimum
     kind = "hand-written planted bugs" if written else "planted bugs"
     summary = f"caught {len(caught)}/{viable} {kind} ({score:.0%}, minimum {minimum:.0%})"
+    if written and not_viable:
+        summary += f"; {len(not_viable)} couldn't be judged because the checks failed without a difference"
     return GateResult("canaries", passed, summary, details)

@@ -90,12 +90,17 @@ def test_hand_written_canaries_replace_ast_mutants(tmp_path):
         "    return _slug(text, max_len, sep).upper()\n"
     )
     (tmp_path / "002-noop.py").write_text("# canary: changes nothing\n_unused = 1\n")
+    (tmp_path / "003-broken.py").write_text("# canary: can't even import\nraise RuntimeError('broken')\n")
     written = load_written_canaries(tmp_path, "textkit/__init__.py")
-    assert [m.description for m in written] == ["001-upper: slug keeps capitals", "002-noop: changes nothing"]
+    assert [m.description for m in written][:2] == ["001-upper: slug keeps capitals", "002-noop: changes nothing"]
     result = canary_gate(GOOD, TEXTKIT, "textkit", minimum=0.5, max_examples=30, workers=2, written=written)
     assert result.details["caught"] == 1
     assert [m["bug"] for m in result.details["missed"]] == ["002-noop: changes nothing"]
     assert "hand-written" in result.summary
+    # A hand-written bug that can't be judged still counts in the total.
+    assert result.details["not_viable"] == 1, result.details
+    assert "1/3" in result.summary and "couldn't be judged" in result.summary
+    assert not result.passed
 
 
 def test_vendored_crates_are_copied_in_and_frozen(tmp_path):
