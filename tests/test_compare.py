@@ -169,6 +169,14 @@ def test_lone_surrogates_and_huge_ints_survive_the_trip(compare):
     session = compare("def f(x): return x", "def f(x): return x")
     session.same("f", "\ud800")
     session.same("f", 10**400)
+    session.same("f", -(10**5000) + 7)  # past Python's 4,300-digit limit for decimal text
+    assert not session.stats["f"].get("crashed") and not session.stats["f"].get("not_compared")
+
+
+def test_the_digit_limit_is_still_the_librarys_behavior(compare):
+    session = compare("def f(x): return str(x)", "def f(x): return str(x)")
+    session.same("f", 10**5000)
+    assert session.stats["f"]["raised"] == {"ValueError": 1}
 
 
 def test_library_stdout_cannot_corrupt_the_protocol(compare):

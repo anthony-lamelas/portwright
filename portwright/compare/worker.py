@@ -39,6 +39,16 @@ class PythonExpression:
         return f"PythonExpression({self.source!r})"
 
 
+
+def _int_text(value: int) -> str:
+    """Decimal for readable reports, hex past ~3,900 digits.
+
+    Python 3.12 refuses to turn ints over 4,300 digits into decimal text, so sending
+    them as decimal crashed the worker, and both sides "crashing" passed as a match.
+    Hex has no such limit. ``int(text, 0)`` reads both forms.
+    """
+    return str(value) if value.bit_length() < 13000 else hex(value)
+
 def encode(value):
     """Turn an input value into JSON the other side can rebuild exactly."""
     if isinstance(value, PythonExpression):
@@ -49,7 +59,7 @@ def encode(value):
     if kind is bool:
         return {"t": "bool", "v": value}
     if kind is int:
-        return {"t": "int", "v": str(value)}
+        return {"t": "int", "v": _int_text(value)}
     if kind is float:
         return {"t": "float", "v": value.hex()}
     if kind is str:
@@ -88,7 +98,7 @@ def decode(data, handles, evaluate=True):
     if tag == "bool":
         return value
     if tag == "int":
-        return int(value)
+        return int(value, 0)
     if tag == "float":
         return float.fromhex(value)
     if tag == "str":
@@ -166,7 +176,7 @@ def canon(value, handles, depth=0, seen=()):
     if kind is bool:
         return {"t": "bool", "v": value}
     if kind is int:
-        return {"t": "int", "v": str(value)}
+        return {"t": "int", "v": _int_text(value)}
     if kind is float:
         return {"t": "float", "v": value.hex()}
     if kind is str:
