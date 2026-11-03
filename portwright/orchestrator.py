@@ -26,7 +26,7 @@ from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
 from portwright.manifest import extract_api
 from portwright.report import write_report
 from portwright.scaffold import crate_names, init_repo, write_scaffold
-from portwright.scheduler import BLOCKED, MERGED, RETRY, TaskBoard, Workspaces, run_board
+from portwright.scheduler import BLOCKED, CONFLICT, MERGED, RETRY, TaskBoard, Workspaces, run_board
 from portwright.state import JsonStore, RunPaths, append_capped, atomic_write
 
 PHASES = ["intake", "checks", "design", "port", "harden", "fix_review", "cleanup", "performance", "final_review", "report"]
@@ -610,6 +610,8 @@ class Porter:
             # Two attempts agree the fix needs a frozen file changed. More porting
             # can't get past that, and only a person can grant it.
             return BLOCKED, f"needs a change to frozen shared code, requested in two attempts:\n{text}\n{notes}"
+        if merged.reason == "conflict":
+            return CONFLICT, f"{text}\nRebase onto main and keep both sides; your work itself wasn't rejected.\n{notes}"
         return RETRY, f"{text}\n{notes}"
 
     def _shared_change_attempts(self, task_id: str) -> int:

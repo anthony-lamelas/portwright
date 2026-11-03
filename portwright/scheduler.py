@@ -24,6 +24,8 @@ CLAIMED = "claimed"
 MERGED = "merged"
 BLOCKED = "blocked"
 RETRY = "retry"
+CONFLICT = "conflict"  # retry after a merge conflict, which isn't the agent's failure
+MAX_CONFLICTS = 6
 
 
 class TaskBoard:
@@ -86,6 +88,12 @@ class TaskBoard:
             if status == RETRY:
                 task["status"] = PENDING
                 task["attempts"] += 1
+                task["failure"] = failure
+            elif status == CONFLICT:
+                # Parallel tasks often append to the same module list. Losing that race
+                # isn't a failed attempt, but endless races still have to stop.
+                task["conflicts"] = task.get("conflicts", 0) + 1
+                task["status"] = BLOCKED if task["conflicts"] > MAX_CONFLICTS else PENDING
                 task["failure"] = failure
             else:
                 task["status"] = status

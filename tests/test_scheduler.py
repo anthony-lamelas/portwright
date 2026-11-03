@@ -283,3 +283,18 @@ def test_a_resumed_run_frees_claims_left_by_a_dead_run(tmp_path):
     assert board.ready() == []  # still held for the whole lease
     board.release_all()
     assert board.ready() == ["a"]
+
+
+def test_a_merge_conflict_doesnt_use_up_an_attempt(tmp_path):
+    from portwright.scheduler import BLOCKED, CONFLICT, MAX_CONFLICTS, PENDING
+
+    board = make_board(tmp_path)
+    board.add("a", ["x"])
+    for _ in range(MAX_CONFLICTS):
+        assert board.claim("a", "w")
+        board.finish("a", CONFLICT, "conflict in lib.rs")
+        assert board.tasks()["a"]["status"] == PENDING
+    assert board.tasks()["a"]["attempts"] == 0
+    assert board.claim("a", "w")
+    board.finish("a", CONFLICT, "conflict in lib.rs")
+    assert board.tasks()["a"]["status"] == BLOCKED, "endless races still stop"
