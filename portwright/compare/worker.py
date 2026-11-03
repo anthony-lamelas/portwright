@@ -281,6 +281,18 @@ def run_benchmark(request, module, handles):
     return {"kind": "benchmark", "median_ns": samples[len(samples) // 2], "fastest_ns": samples[0], "loops": loops}
 
 
+def _limit_memory():
+    """Cap this worker's address space, so an input that asks for a huge allocation,
+    such as format(1, "2000000000"), raises MemoryError here instead of starving the
+    machine. Both versions run under the same cap, so the outcome is still compared."""
+    import resource
+
+    megabytes = int(os.environ.get("PORTWRIGHT_WORKER_MEMORY_MB", "1024"))
+    if megabytes > 0:
+        limit = megabytes * 1024 * 1024
+        resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--module", required=True)
@@ -293,6 +305,7 @@ def main() -> int:
     protocol = os.fdopen(os.dup(1), "w", encoding="utf-8", buffering=1)
     os.dup2(2, 1)
     sys.path.insert(0, options.path)
+    _limit_memory()
 
     collector = None
     if options.coverage:

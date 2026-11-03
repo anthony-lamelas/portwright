@@ -20,6 +20,7 @@ differences belong in each port's `CONFORMANCE.md`, not here. New entries go at 
 | 11 | humanize | A porter built its own comparison tool, which caused #8 | The planner put Python's formatting in a "foundation" task whose own APIs never used it, so the harness couldn't check that work | Planner rule: no infrastructure-only tasks. Porter rule: rely on the check command and flag unreachable work |
 | 12 | pycompat | Planted bugs mean nothing for a shim over built-ins | The original's logic is CPython's C code, so there is no Python to plant bugs in | Runs can supply hand-written planted bugs, kept from agents |
 | 13 | pycompat | Two of my own 42 hand-written planted bugs changed nothing | One reproduced Python's output exactly, and one's trigger condition was never true | Caught by applying each to the shim and checking that an output changes. See open item C |
+| 14 | pycompat | Checks could make the host run out of memory | Comparison workers run on the host without a limit, and a formatting check can ask for a width of billions | Each worker's address space is capped at 1 GB (`PORTWRIGHT_WORKER_MEMORY_MB`), so huge requests raise `MemoryError` in both versions and the outcome is still compared. Covers part of open item E |
 
 ## Open
 
