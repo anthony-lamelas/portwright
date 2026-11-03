@@ -143,3 +143,36 @@ def test_seed_code_is_copied_in_but_not_frozen(tmp_path):
     assert porter.run_state.read()["shared"] == {}
     assert "seed/pyre" in porter._vendor_note()
     assert isinstance(config.seed, int), "the random seed must not be shadowed by another field"
+
+
+def test_redo_forgets_a_phase_and_everything_after_it(tmp_path):
+    from portwright.orchestrator import Config, Porter
+
+    config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u", run_dir=tmp_path / "run")
+    porter = Porter(config, None)
+    porter.run_state.update(lambda d: d.update(phases_done=["intake", "checks", "cleanup", "performance"], stopped="x"))
+    porter.redo_from("cleanup")
+    state = porter.run_state.read()
+    assert state["phases_done"] == ["intake", "checks"] and state["stopped"] is None
+    with pytest.raises(ValueError):
+        porter.redo_from("nope")
+
+
+def test_cleanup_hears_about_rust_the_checks_never_run(tmp_path):
+    from portwright.orchestrator import Config, Porter
+
+    config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u", run_dir=tmp_path / "run")
+    porter = Porter(config, None)
+    src = porter.paths.port / "crates" / "x-core" / "src"
+    src.mkdir(parents=True)
+    (src / "lib.rs").write_text("pub fn f() {}\n")
+    (src / "table.rs").write_text("".join(f"pub static T{i}: u8 = {i % 9};\n" for i in range(300)))
+    files = [
+        {"file": "crates/x-core/src/lib.rs", "lines": 100.0, "functions": 1, "functions_covered": 1},
+        {"file": "crates/x-core/src/object.rs", "lines": 39.4, "functions": 33, "functions_covered": 17},
+    ]
+    porter.run_state.update(lambda d: d["gates"].update(rust_coverage={"details": {"files": files}}))
+    hints = porter._coverage_hints()
+    assert "object.rs: the checks run 39% of its lines and 17/33 functions" in hints
+    assert "table.rs: no code the checks can run" in hints
+    assert "lib.rs" not in hints

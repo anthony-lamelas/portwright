@@ -21,7 +21,7 @@ from portwright.gates.fuzz import fuzz_gate
 from portwright.gates.integrity import hash_tree
 from portwright.gates.license import is_permissive
 from portwright.gates.mutation import mutation_gate
-from portwright.gates.rust_quality import count_rust_lines
+from portwright.gates.rust_quality import count_rust_lines, count_rust_lines_file
 from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
 from portwright.manifest import extract_api
 from portwright.report import write_report
@@ -119,6 +119,34 @@ class Porter:
                 continue
             self.run_state.update(lambda d: d["phases_done"].append(phase))
         return self.run_state.read()
+
+    def redo_from(self, phase: str) -> None:
+        """Forget that ``phase`` and every later phase ran, so the next run does them again."""
+        if phase not in PHASES:
+            raise ValueError(f"unknown phase {phase!r}; phases are {', '.join(PHASES)}")
+        later = set(PHASES[PHASES.index(phase):])
+        self.run_state.update(lambda d: d.update(phases_done=[p for p in d["phases_done"] if p not in later], stopped=None))
+        self._log(f"redo from {phase}, by request")
+
+    def _coverage_hints(self) -> str:
+        """Point cleanup at Rust the checks barely run: it is untested or dead."""
+        files = self.run_state.read()["gates"].get("rust_coverage", {}).get("details", {}).get("files", [])
+        low = [f for f in files if f["lines"] < 60]
+        covered = {f["file"] for f in files}
+        data_only = []
+        for path in sorted((self.paths.port / "crates").rglob("*.rs")):
+            relative = str(path.relative_to(self.paths.port))
+            if "/src/" in relative and relative not in covered and count_rust_lines_file(path) > 200:
+                data_only.append(relative)
+        lines = [f"- {f['file']}: the checks run {f['lines']:.0f}% of its lines and {f['functions_covered']}/{f['functions']} functions" for f in low]
+        lines += [f"- {name}: no code the checks can run (data only). Delete it if nothing the checks run reads it." for name in data_only]
+        if not lines:
+            return ""
+        return (
+            "\n\nRust coverage from the checks. Code the checks never run is either untested or dead. "
+            "Delete dead code, including generated tables nothing reachable uses; a \"generated, do not edit\" "
+            "header doesn't make dead code necessary:\n" + "\n".join(lines)
+        )
 
     def _log(self, message: str) -> None:
         line = f"{time.strftime('%H:%M:%S')} {message}"
@@ -830,7 +858,10 @@ class Porter:
             after = count_rust_lines(path)
             passed = after <= before * 1.05
             return GateResult("cleanup", passed, f"Rust lines went from {before} to {after} (5% growth allowed)", {"before": before, "after": after})
-        prompt = f"Make the Rust simpler and more idiomatic without changing behavior.\n\nReviewer's findings:\n{findings}\n\nCheck your work with: python -m portwright.agent_check port"
+        prompt = (
+            f"Make the Rust simpler and more idiomatic without changing behavior.\n\nReviewer's findings:\n{findings}"
+            f"{self._coverage_hints()}\n\nCheck your work with: python -m portwright.agent_check port"
+        )
         self._record(self._try_change("cleanup", "cleanup", prompt, simpler))
 
     def _phase_performance(self) -> None:

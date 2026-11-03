@@ -88,10 +88,20 @@ def rust_coverage(workspace, checks_dir, upstream_path, module: str, crate: str,
     report = (Path(target_dir) if target_dir else Path(workspace) / "target") / "rust-coverage.json"
     if done.returncode != 0 or not report.exists():
         return GateResult("rust_coverage", False, "Rust coverage failed to run", {"output": (done.stdout + done.stderr)[-2000:]})
-    totals = json.loads(report.read_text())["data"][0]["totals"]
+    data = json.loads(report.read_text())["data"][0]
+    totals = data["totals"]
     percent = totals["lines"]["percent"]
+    files = [
+        {
+            "file": item["filename"].removeprefix("/work/"),
+            "lines": item["summary"]["lines"]["percent"],
+            "functions": item["summary"]["functions"]["count"],
+            "functions_covered": item["summary"]["functions"]["covered"],
+        }
+        for item in data.get("files", [])
+    ]
     return GateResult(
         "rust_coverage", True,
         f"checks reach {percent:.1f}% of Rust lines and {totals['functions']['percent']:.1f}% of functions",
-        {"lines": percent, "functions": totals["functions"]["percent"]},
+        {"lines": percent, "functions": totals["functions"]["percent"], "files": sorted(files, key=lambda f: f["lines"])},
     )

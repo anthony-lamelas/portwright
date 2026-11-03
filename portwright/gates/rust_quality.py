@@ -41,6 +41,10 @@ def rust_quality_gate(workspace, *, py_crate_name: str, target_dir=None, timeout
     return GateResult("rust_quality", True, "rustfmt, Clippy, and Rust tests pass", {})
 
 
+def count_rust_lines_file(path) -> int:
+    return sum(1 for line in Path(path).read_text(encoding="utf-8").splitlines() if line.strip())
+
+
 def count_rust_lines(workspace) -> int:
     """Count non-blank Rust lines outside build output and fuzz targets."""
     total = 0

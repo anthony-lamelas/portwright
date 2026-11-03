@@ -82,6 +82,8 @@ def command_run(options) -> int:
     # the containers' own time limit and the startup cleanup cover that case.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     deadline = time.time() + options.max_wait_hours * 3600
+    if options.redo:
+        Porter(config, backend).redo_from(options.redo)
     try:
         while True:
             try:
@@ -135,6 +137,7 @@ def main(argv=None) -> int:
     run.add_argument("--tests", help="tests path inside the clone")
     run.add_argument("--url")
     run.add_argument("--auth", default=SUBSCRIPTION, choices=["subscription", "api_key"])
+    run.add_argument("--redo", metavar="PHASE", help="run PHASE and every later phase again, e.g. after a harness fix")
     run.add_argument("--canaries", help="hand-written planted bugs inside the clone, kept from agents")
     run.add_argument("--reference-note", help="what the original really is, for the report")
     run.add_argument("--vendor", action="append", metavar="NAME=CRATE_DIR",
