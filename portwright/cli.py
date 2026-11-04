@@ -17,6 +17,7 @@ from portwright.sandbox import AllowlistProxy
 from portwright.state import JsonStore
 from portwright.toolchain import image_available, python_mismatch
 
+LOGIN_RETRY_SECONDS = 30
 LIMIT_WAIT_SECONDS = 15 * 60
 
 
@@ -93,8 +94,11 @@ def command_run(options) -> int:
                 if not options.wait or time.time() > deadline:
                     print(f"Paused at a usage limit: {limit}\nRun the same command again to resume.")
                     return 3
-                print(f"Usage limit reached. Retrying in {LIMIT_WAIT_SECONDS // 60} minutes: {str(limit)[:200]}", flush=True)
-                time.sleep(LIMIT_WAIT_SECONDS)
+                # A revoked login usually means the host's own Claude Code just rotated its
+                # token, so a fresh one is already on disk. A real usage limit needs a long wait.
+                wait = LOGIN_RETRY_SECONDS if "login needs renewing" in str(limit) else LIMIT_WAIT_SECONDS
+                print(f"Paused ({str(limit)[:200]}). Retrying in {wait} seconds.", flush=True)
+                time.sleep(wait)
     finally:
         backend.stop_leftovers(sessions)
         proxy.stop()
