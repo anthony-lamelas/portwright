@@ -129,6 +129,33 @@ def command_decide(options) -> int:
     return 0
 
 
+def command_grant(options) -> int:
+    """Let agents change frozen shared files, as a person's answer to a shared_change request.
+
+    The files stop being frozen for the rest of the run. Every change to them still has
+    to pass every gate, for every API.
+    """
+    run_dir = Path(options.run_dir).resolve()
+    store = JsonStore(run_dir / "control" / "run.json")
+    granted = []
+
+    def unfreeze(data):
+        for key in list(data.get("shared", {})):
+            if key in options.paths:
+                del data["shared"][key]
+                granted.append(key)
+    store.update(unfreeze)
+    missing = sorted(set(options.paths) - set(granted))
+    if missing:
+        print(f"Not frozen, nothing to do: {', '.join(missing)}")
+    if granted:
+        decisions = run_dir / "control" / "human_decisions.md"
+        with decisions.open("a", encoding="utf-8") as handle:
+            handle.write(f"- Granted: you may now change {', '.join(granted)}. {options.reason.strip()}\n")
+        print(f"Unfroze {', '.join(granted)}")
+    return 0
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="portwright", description=__doc__)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -164,6 +191,11 @@ def main(argv=None) -> int:
     decide.add_argument("--run-dir", required=True)
     decide.add_argument("text")
     decide.set_defaults(handler=command_decide)
+    grant = commands.add_parser("grant", help="unfreeze shared files in answer to a shared_change request")
+    grant.add_argument("--run-dir", required=True)
+    grant.add_argument("--reason", required=True, help="what the change is for; agents see it")
+    grant.add_argument("paths", nargs="+", help="frozen paths, as listed in control/run.json")
+    grant.set_defaults(handler=command_grant)
     options = parser.parse_args(argv)
     return options.handler(options)
 
