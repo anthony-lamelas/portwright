@@ -1,0 +1,10 @@
+[
+ {"name": "search_word", "target": "search", "args": ["\\b(?P<word>w\\w+)\\b", "the quick brown fox jumps over the lazy dog and walks away"], "kwargs": {}},
+ {"name": "findall_numbers", "target": "findall", "args": ["-?\\d+(?:\\.\\d+)?", "x=12, y=-3.5, z=1000, w=0.25, v=7; total 1020.75 over 12 items"], "kwargs": {}},
+ {"name": "sub_template", "target": "sub", "args": ["(\\w+)@(\\w+)\\.com", "<\\2:\\1>", "alice@example.com, bob@test.com; carol@mail.com"], "kwargs": {}},
+ {"name": "split_csvish", "target": "split", "args": ["\\s*[,;]\\s*", "alpha, beta ;gamma,delta ; epsilon,zeta,eta ;theta"], "kwargs": {}},
+ {"name": "fullmatch_iso_date", "target": "fullmatch", "args": ["(\\d{4})-(\\d{2})-(\\d{2})T(\\d{2}):(\\d{2})(?::(\\d{2}))?", "2024-02-29T13:45:07"], "kwargs": {}},
+ {"name": "ignorecase_unicode", "target": "findall", "args": ["(?i)straße|ſtrasse|[kσ]+", "STRASSE Straße ſtrasse KkK σΣς"], "kwargs": {}},
+ {"name": "escape_text", "target": "escape", "args": ["path/to/file (copy) [1].txt? *.* $HOME ^x|y"], "kwargs": {}},
+ {"name": "compile_verbose", "target": "compile", "args": ["(?x) ^ (?P<user>[\\w.+-]+) @ (?P<host>[\\w-]+ (?:\\.[\\w-]+)+) $", 0], "kwargs": {}}
+]

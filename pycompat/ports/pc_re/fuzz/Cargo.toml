@@ -1,0 +1,72 @@
+[package]
+name = "pc-re-port-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+arbitrary = "1"
+num-bigint = "0.4"
+
+[dependencies.pc-re-port-core]
+path = "../crates/pc-re-port-core"
+
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "compile"
+path = "fuzz_targets/compile.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "search"
+path = "fuzz_targets/search.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "scan"
+path = "fuzz_targets/scan.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "sub"
+path = "fuzz_targets/sub.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "escape"
+path = "fuzz_targets/escape.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "error_init"
+path = "fuzz_targets/error_init.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "api_values"
+path = "fuzz_targets/api_values.rs"
+test = false
+doc = false
+bench = false

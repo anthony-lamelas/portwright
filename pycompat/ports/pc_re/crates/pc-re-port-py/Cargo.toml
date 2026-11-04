@@ -1,0 +1,17 @@
+[package]
+name = "pc-re-port-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Python bindings for the experimental, unofficial Rust port of pc_re."
+
+[lib]
+name = "pc_re"
+crate-type = ["cdylib"]
+
+[dependencies]
+pc-re-port-core = { path = "../pc-re-port-core" }
+pyo3 = { version = "0.29", features = ["extension-module", "num-bigint", "rust_decimal"] }
+num-bigint = "0.4"
+rust_decimal = "1"
