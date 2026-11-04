@@ -204,8 +204,15 @@ def test_a_person_can_grant_a_shared_change(tmp_path):
     config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u", run_dir=tmp_path / "run")
     porter = Porter(config, None)
     porter.run_state.update(lambda d: d.update(shared={"crates/x/src/error.rs": "h1", "crates/x/src/value.rs": "h2"}))
+    porter.board.add("t", ["f"])
+    porter.board.finish("t", "blocked", "needs a change to frozen shared code, requested in two attempts")
+    requests = config.run_dir / "control" / "requests"
+    requests.mkdir(parents=True)
+    (requests / "done-t-a1-error.json").write_text('{"type": "shared_change"}')
     assert main(["grant", "--run-dir", str(config.run_dir), "--reason", "Add an AttributeError variant.",
                  "crates/x/src/error.rs"]) == 0
     assert porter.run_state.read()["shared"] == {"crates/x/src/value.rs": "h2"}
     decisions = (config.run_dir / "control" / "human_decisions.md").read_text()
     assert "crates/x/src/error.rs" in decisions and "AttributeError" in decisions
+    assert porter.board.tasks()["t"]["status"] == "pending", "a task waiting for this grant is reopened"
+    assert porter._shared_change_attempts("t") == 0, "answered requests no longer count toward blocking"

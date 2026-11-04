@@ -149,6 +149,19 @@ def command_grant(options) -> int:
     if missing:
         print(f"Not frozen, nothing to do: {', '.join(missing)}")
     if granted:
+        # Requests now answered no longer count toward blocking a task (#19), and tasks
+        # blocked while waiting for this answer go back in the queue.
+        requests = run_dir / "control" / "requests"
+        for path in requests.glob("done-*.json") if requests.is_dir() else ():
+            path.rename(requests / ("granted-" + path.name[len("done-"):]))
+        board = JsonStore(run_dir / "control" / "board.json")
+
+        def reopen(data):
+            for task in data.get("tasks", {}).values():
+                if task["status"] == "blocked" and "frozen shared code" in task.get("failure", ""):
+                    task["status"] = "pending"
+                    task["claim"] = None
+        board.update(reopen)
         decisions = run_dir / "control" / "human_decisions.md"
         with decisions.open("a", encoding="utf-8") as handle:
             handle.write(f"- Granted: you may now change {', '.join(granted)}. {options.reason.strip()}\n")
