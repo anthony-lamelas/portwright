@@ -16,4 +16,5 @@ def pytest_configure(config):
     if not image_available():
         os.environ["PORTWRIGHT_GATES_ON_HOST"] = "1"
     elif not config.option.basetemp:
+        (REPO / "target").mkdir(exist_ok=True)
         config.option.basetemp = str(REPO / "target" / "pytest-tmp")
