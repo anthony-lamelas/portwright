@@ -361,6 +361,7 @@ class Porter:
                     shutil.copy2(folder / "CONFORMANCE.md", destination / "CONFORMANCE.md")
                     break
             frozen.update({f"vendor/{name}/{key}": value for key, value in hash_tree(destination).items()})
+            self._adopt_release_profile(name, Path(crate))
         if frozen:
             self.run_state.update(lambda d: d["shared"].update(frozen))
         for name, directory in self.config.seed_crates.items():
@@ -368,6 +369,39 @@ class Porter:
             if destination.exists():
                 shutil.rmtree(destination)
             shutil.copytree(Path(directory), destination, ignore=shutil.ignore_patterns("target", ".git"))
+
+    def _adopt_release_profile(self, name: str, crate: Path) -> None:
+        """Carry a vendored crate's release settings into the port's workspace root.
+
+        Cargo reads profiles only from the workspace root, so a crate copied in loses
+        its own (pc_re's `lto = "fat"`, `codegen-units = 1`) and runs slower than its
+        report says. Settings the port already has win; conflicts are logged.
+        """
+        import tomllib
+
+        source = next(
+            (folder / "Cargo.toml" for folder in (crate, *crate.resolve().parents[:3])
+             if (folder / "Cargo.toml").is_file() and "[workspace]" in (folder / "Cargo.toml").read_text()),
+            None,
+        )
+        if source is None:
+            return
+        wanted = tomllib.loads(source.read_text()).get("profile", {}).get("release", {})
+        root = self.paths.port / "Cargo.toml"
+        have = tomllib.loads(root.read_text()).get("profile", {}).get("release", {})
+        added = []
+        for key, value in wanted.items():
+            if key not in have:
+                added.append(f"{key} = {json.dumps(value)}")
+                have[key] = value
+            elif have[key] != value:
+                self._log(f"  vendor/{name} wants profile.release.{key} = {value!r}; keeping {have[key]!r}")
+        if added:
+            text = root.read_text()
+            marker = "[profile.release]\n"
+            line = f"# From vendor/{name}, whose speed was measured with these settings.\n" + "\n".join(added) + "\n"
+            text = text.replace(marker, marker + line, 1) if marker in text else text + "\n" + marker + line
+            root.write_text(text)
 
     def _vendor_note(self) -> str:
         note = ""
@@ -798,7 +832,7 @@ class Porter:
                 "A long run with new random inputs found differences. Fix the Rust.",
             )
             holdout = self._record(self._holdout_gate(), "holdout_tests")
-            fuzz = self._record(fuzz_gate(self.paths.port, seconds_per_target=config.fuzz_seconds, target_dir=self._target("fuzz")))
+            fuzz = self._fuzz()
             problems = []
             if not holdout.passed:
                 # Names only: the tests themselves stay hidden.
@@ -840,15 +874,53 @@ class Porter:
 
     def _strengthen(self, missed: list[dict]) -> None:
         """Undetected Rust bugs mean a blind spot, so the test writer fixes them, not the porter."""
-        self._agent(
-            "test_writer", "strengthen",
+        self._change_locked_checks(
+            "strengthen", "self_comparison",
             "Stage: strengthen. These bugs planted in the Rust weren't caught. Add input rules to /work/checks so "
             "they would be, or explain in /work/out/tried.md why a change can't alter behavior. Don't weaken anything.\n"
             + json.dumps(missed, indent=1),
             {str(self.paths.checks): "/work/checks", str(self.paths.port): "/work/port:ro"},
         )
-        self._record(self_comparison_gate(self.paths.checks, self.reference, api=self.api, seed=self.config.seed, max_examples=self.config.examples))
+
+    def _change_locked_checks(self, label: str, gate_label: str, prompt: str, mounts: dict[str, str]) -> GateResult:
+        """Let the test writer change the locked checks, and keep the change only if the
+        checks still agree with the original and nothing earlier was dropped.
+
+        A broken or nondeterministic check used to be locked as left, and then sent
+        debuggers chasing it until the run stopped.
+        """
+        before = self.paths.build / "checks-before" / label
+        if before.exists():
+            shutil.rmtree(before)
+        shutil.copytree(self.paths.checks, before)
+        self._agent("test_writer", label, prompt, mounts)
+        lost = self._checks_lost(before)
+        self_check = self_comparison_gate(
+            self.paths.checks, self.reference, api=self.api, seed=self.config.seed, max_examples=self.config.examples,
+        )
+        if lost or not self_check.passed:
+            reason = f"it removed {', '.join(lost[:10])}" if lost else f"the checks disagree with the original itself: {self_check.summary}"
+            shutil.rmtree(self.paths.checks)
+            shutil.copytree(before, self.paths.checks)
+            self._log(f"  {label}: discarded the test writer's changes, because {reason}")
+            self_check = GateResult(gate_label, False, f"changes discarded, because {reason}", self_check.details)
+        add_regressions(self.paths.checks, {})  # restores the harness-owned regression runner
+        self._record(self_check, gate_label)
         self._lock_checks()
+        return self_check
+
+    def _checks_lost(self, before: Path) -> list[str]:
+        """Check files, and saved regression inputs, that a test-writer stage removed."""
+        now = hash_tree(self.paths.checks)
+        lost = [name for name in hash_tree(before) if name not in now and "__pycache__" not in name]
+        old = before / "regressions.json"
+        if old.exists():
+            current = self.paths.checks / "regressions.json"
+            kept = {json.dumps(item, sort_keys=True) for item in json.loads(current.read_text())} if current.exists() else set()
+            dropped = [item for item in json.loads(old.read_text()) if json.dumps(item, sort_keys=True) not in kept]
+            if dropped:
+                lost.append(f"{len(dropped)} saved regression inputs")
+        return lost
 
     def _review(self, label: str) -> None:
         self._agent(
@@ -907,8 +979,8 @@ class Porter:
         if not review.exists():
             return
         self._unfreeze_shared_code()
-        self._agent(
-            "test_writer", f"{stage}-checks",
+        self_check = self._change_locked_checks(
+            f"{stage}-checks", f"self_comparison_after_{stage}",
             "Stage: review findings. A reviewer read the Rust port and reported the problems below. For each "
             "finding that claims the port *behaves* differently from the original (crashes, wrong results, "
             "different errors, unsupported inputs), add inputs to /work/checks that reach it, so the comparison "
@@ -916,13 +988,8 @@ class Porter:
             "findings about style or speed. Don't weaken or remove anything.\n\n" + review.read_text(encoding="utf-8"),
             self._test_writer_mounts((str(self.paths.port), "/work/port:ro")),
         )
-        self_check = self._record(
-            self_comparison_gate(self.paths.checks, self.reference, api=self.api, seed=self.config.seed, max_examples=self.config.examples),
-            f"self_comparison_after_{stage}",
-        )
         if not self_check.passed:
-            raise RunStopped(f"the checks added for review findings don't agree with themselves: {self_check.summary}")
-        self._lock_checks()
+            return  # the old checks are back; nothing new for debuggers to fix
         self._fix_until(stage, self._verify_main, "New checks reproduce problems a reviewer found. Fix the Rust so the port matches the original.")
 
     def _phase_cleanup(self) -> None:
@@ -975,6 +1042,13 @@ class Porter:
         self._review("final")
         self._fix_review_findings("final_review")
 
+    def _fuzz(self) -> GateResult:
+        """Fuzz main, and remember which commit that covered."""
+        head = self.workspaces.head()
+        result = self._record(fuzz_gate(self.paths.port, seconds_per_target=self.config.fuzz_seconds, target_dir=self._target("fuzz")))
+        self.run_state.update(lambda d: d.update(fuzzed_commit=head))
+        return result
+
     def _phase_report(self) -> None:
         state = self.run_state.read()
         benchmarks = load_benchmarks(self.paths.checks) if self.paths.checks.exists() else []
@@ -984,6 +1058,12 @@ class Porter:
         if finished:
             verdict = self._verify_main()
             self._record(self._holdout_gate(), "holdout_tests")
+            if state.get("fuzzed_commit") and state["fuzzed_commit"] != self.workspaces.head():
+                # Rust merged after hardening (review fixes, cleanup, performance) was never
+                # fuzzed, and could even stop the frozen targets building. The verdict
+                # counts this gate, so it has to describe the code being reported.
+                self._log("  main changed since it was fuzzed; fuzzing again")
+                self._fuzz()
             if benchmarks and verdict.site:
                 reference = run_benchmarks(self.reference, benchmarks)
                 port = run_benchmarks({**self.reference, "path": verdict.site}, benchmarks)

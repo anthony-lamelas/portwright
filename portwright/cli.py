@@ -10,6 +10,7 @@ import sys
 import time
 from pathlib import Path
 
+from portwright import isolation
 from portwright.agents import DockerClaude, LimitReached
 from portwright.auth import SUBSCRIPTION, Auth, AuthError
 from portwright.orchestrator import Config, Porter
@@ -32,6 +33,15 @@ def _load_or_create_config(options) -> Config:
         data = json.loads(path.read_text())
         data["source"], data["run_dir"] = Path(data["source"]), Path(data["run_dir"])
         config = Config(**data)
+        # Crates are copied in and frozen when the port is scaffolded. Adding them later
+        # would change frozen files under work that already merged, so say so rather
+        # than silently running without them.
+        wanted = {name: str(Path(path).resolve()) for name, path in (item.split("=", 1) for item in options.vendor or [])}
+        if wanted and wanted != config.vendor:
+            sys.exit(
+                f"This run was started with --vendor {config.vendor or 'nothing'}; vendored crates can only be "
+                f"chosen when a run starts. Use a new --run-dir to vendor {wanted}."
+            )
     else:
         for name in ("lib", "module", "source", "package", "tests", "url"):
             if getattr(options, name, None) is None:
@@ -64,7 +74,9 @@ def command_run(options) -> int:
         sys.exit(str(error))
     if not image_available():
         sys.exit("The toolchain image isn't built. Run: docker build --network host -t portwright-toolchain:dev -f docker/toolchain.Dockerfile docker")
-    mismatch = python_mismatch()
+    # Contained gates run the original on the image's Python, the same one agents
+    # preview with, so the host's version only matters when gates run on the host.
+    mismatch = python_mismatch() if not isolation.enabled() else None
     if mismatch:
         sys.exit(mismatch)
     config = _load_or_create_config(options)

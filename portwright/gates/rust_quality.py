@@ -25,11 +25,14 @@ def rust_quality_gate(workspace, *, py_crate_name: str, target_dir=None, timeout
     config_dir.mkdir(parents=True, exist_ok=True)
     (config_dir / "clippy.toml").write_text(CLIPPY_CONFIG)
     env = {"CLIPPY_CONF_DIR": str(config_dir) if in_sandbox() else "/work/target/porter-clippy"}
+    # Vendored crates are frozen and passed these checks in their own ports; linting
+    # and testing them again on every gate only costs time.
+    vendored = [arg for package in vendored_packages(workspace) for arg in ("--exclude", package)]
     steps = [
         ("rustfmt", ["cargo", "fmt", "--all", "--check"]),
-        ("clippy", ["cargo", "clippy", "--workspace", "--all-targets", "--", *CLIPPY_RULES]),
+        ("clippy", ["cargo", "clippy", "--workspace", *vendored, "--all-targets", "--", *CLIPPY_RULES]),
         ("rust_tests", [
-            "cargo", "nextest", "run", "--workspace", "--exclude", py_crate_name,
+            "cargo", "nextest", "run", "--workspace", "--exclude", py_crate_name, *vendored,
             "--no-tests=pass", "--cargo-quiet",
         ]),
     ]
@@ -53,3 +56,15 @@ def count_rust_lines(workspace) -> int:
             continue
         total += sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
     return total
+
+
+def vendored_packages(workspace) -> list[str]:
+    """Package names of the crates copied into vendor/."""
+    import tomllib
+
+    names = []
+    for manifest in sorted(Path(workspace).glob("vendor/*/Cargo.toml")):
+        package = tomllib.loads(manifest.read_text(encoding="utf-8")).get("package", {})
+        if package.get("name"):
+            names.append(package["name"])
+    return names
