@@ -406,3 +406,19 @@ def test_build_scripts_and_crate_sources_elsewhere_are_caught(tmp_path):
     found = problems(port)
     assert any("build scripts run code" in p for p in found)
     assert any(p.startswith("shared/lib.rs:1") and "calls into Python" in p for p in found)
+
+
+def test_maturins_reexport_is_recognised_by_structure_not_exact_text():
+    from portwright.gates.integrity import _MATURIN_INIT, _is_maturin_reexport
+
+    m = "pc_re"
+    for text in (_MATURIN_INIT.format(m), f"from .{m} import *\n__doc__ = {m}.__doc__\n", f'"""Doc."""\nfrom .{m} import *\n'):
+        assert _is_maturin_reexport(text, m), text
+    for text in (
+        f"from .{m} import *\nimport re\n",
+        f"from .{m} import *\nescape = re.escape\n",
+        f"from .{m} import *\nif hasattr({m}, '__all__'):\n    __all__ = {m}.__all__\nelse:\n    import os\n",
+        f"from .{m} import *\n__doc__ = open('x').read()\n",
+        "exec('1')",
+    ):
+        assert not _is_maturin_reexport(text, m), text

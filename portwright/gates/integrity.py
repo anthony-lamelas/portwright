@@ -397,6 +397,46 @@ def integrity_gate(
     return GateResult("integrity", not problems, summary, {"problems": problems})
 
 
+def _is_maturin_reexport(text: str, module: str) -> bool:
+    """Whether ``text`` only re-exports the compiled module, as maturin generates it.
+
+    Checked by structure rather than exact text, so a maturin release that words the
+    file differently still passes, while any other statement fails.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return False
+
+    def is_attribute(node, attribute):
+        return (isinstance(node, ast.Attribute) and node.attr == attribute
+                and isinstance(node.value, ast.Name) and node.value.id == module)
+
+    def is_copy(node, attribute):  # __doc__ = module.__doc__, __all__ = module.__all__
+        return (isinstance(node, ast.Assign) and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name) and node.targets[0].id == attribute
+                and is_attribute(node.value, attribute))
+
+    for node in tree.body:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+            continue  # a docstring
+        if (isinstance(node, ast.ImportFrom) and node.level == 1 and node.module == module
+                and all(alias.asname is None and alias.name in ("*", module) for alias in node.names)):
+            continue
+        if is_copy(node, "__doc__") or is_copy(node, "__all__"):
+            continue
+        if (isinstance(node, ast.If) and not node.orelse
+                and isinstance(node.test, ast.Call) and isinstance(node.test.func, ast.Name) and node.test.func.id == "hasattr"
+                and len(node.test.args) == 2 and isinstance(node.test.args[0], ast.Name) and node.test.args[0].id == module
+                and isinstance(node.test.args[1], ast.Constant) and node.test.args[1].value == "__all__"
+                and all(is_copy(inner, "__all__") for inner in node.body)):
+            continue
+        return False
+    return True
+
+
 def site_problems(site: str | Path, module: str) -> list[str]:
     """Anything in an unpacked wheel besides the compiled module and its .dist-info.
 
@@ -418,7 +458,7 @@ def site_problems(site: str | Path, module: str) -> list[str]:
         allowed = False
         if len(parts) == 2 and parts[0] == module:
             if name == "__init__.py":
-                allowed = path.read_text(encoding="utf-8", errors="replace").strip() == _MATURIN_INIT.format(module)
+                allowed = _is_maturin_reexport(path.read_text(encoding="utf-8", errors="replace"), module)
             elif re.fullmatch(rf"{re.escape(module)}\.(?:cpython-[\w-]+|abi3)\.so", name):
                 allowed = True
                 extensions += 1
