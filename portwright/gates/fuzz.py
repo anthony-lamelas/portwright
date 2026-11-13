@@ -23,7 +23,11 @@ def fuzz_gate(workspace, *, seconds_per_target: int = 60, target_dir=None, paral
     targets = list_fuzz_targets(workspace)
     if not targets:
         return GateResult("fuzz", False, "no fuzz targets", {})
-    built = run_in_toolchain(["cargo", "+nightly", "fuzz", "build"], workspace, target_dir=target_dir, timeout=1800)
+    # cargo-fuzz builds fuzz/ as its own workspace, so its crates are fetched separately.
+    built = run_in_toolchain(
+        ["cargo", "+nightly", "fuzz", "build"], workspace, target_dir=target_dir, timeout=1800,
+        fetch=("fuzz/Cargo.toml",),
+    )
     if built.returncode != 0:
         return GateResult("fuzz", False, "fuzz targets don't build", {"output": (built.stdout + built.stderr)[-3000:]})
 
@@ -33,7 +37,7 @@ def fuzz_gate(workspace, *, seconds_per_target: int = 60, target_dir=None, paral
                 "cargo", "+nightly", "fuzz", "run", target,
                 "--", f"-max_total_time={seconds_per_target}", "-timeout=10", "-rss_limit_mb=2048",
             ],
-            workspace, target_dir=target_dir, timeout=seconds_per_target + 900,
+            workspace, target_dir=target_dir, timeout=seconds_per_target + 900, fetch=("fuzz/Cargo.toml",),
         )
 
     crashes, memory_limit = {}, {}
