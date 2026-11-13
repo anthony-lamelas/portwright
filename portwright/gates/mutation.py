@@ -19,7 +19,8 @@ from portwright.toolchain import build_python_package, run_in_toolchain
 
 def list_rust_mutants(workspace, *, target_dir=None) -> list[dict]:
     done = run_in_toolchain(
-        ["cargo", "mutants", "--list", "--json", "--diff", "--workspace", "--exclude", "fuzz/**"],
+        # Vendored crates are frozen and were mutation-tested in their own ports.
+        ["cargo", "mutants", "--list", "--json", "--diff", "--workspace", "--exclude", "fuzz/**", "--exclude", "vendor/**"],
         workspace, target_dir=target_dir,
     )
     if done.returncode != 0:

@@ -125,6 +125,12 @@ def _shared_problems(workspace: Path, shared: dict) -> list[str]:
     for name, expected in shared.items():
         if current.get(name) != expected:
             problems.append(f"{name} is frozen and can't be changed; file a request instead")
+    # A vendored crate is frozen whole: a file added inside one, such as a build.rs
+    # Cargo would run, changes it as much as an edit does.
+    vendored = {"/".join(name.split("/")[:2]) + "/" for name in shared if name.startswith("vendor/")}
+    for name in sorted(current):
+        if name not in shared and any(name.startswith(prefix) for prefix in vendored) and "/target/" not in name:
+            problems.append(f"{name} was added to a frozen vendored crate; file a request instead")
     return problems
 
 

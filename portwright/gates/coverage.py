@@ -89,8 +89,14 @@ def rust_coverage(workspace, checks_dir, upstream_path, module: str, crate: str,
     if done.returncode != 0 or not report.exists():
         return GateResult("rust_coverage", False, "Rust coverage failed to run", {"output": (done.stdout + done.stderr)[-2000:]})
     data = json.loads(report.read_text())["data"][0]
-    totals = data["totals"]
-    percent = totals["lines"]["percent"]
+    # Vendored crates are frozen and were measured in their own ports. Counting their
+    # tens of thousands of lines here would swamp the port's own number.
+    own = [item for item in data.get("files", []) if not item["filename"].removeprefix("/work/").startswith("vendor/")]
+    if len(own) == len(data.get("files", [])):
+        lines_percent, functions_percent = data["totals"]["lines"]["percent"], data["totals"]["functions"]["percent"]
+    else:
+        lines_percent = _percent(own, "lines")
+        functions_percent = _percent(own, "functions")
     files = [
         {
             "file": item["filename"].removeprefix("/work/"),
@@ -98,10 +104,16 @@ def rust_coverage(workspace, checks_dir, upstream_path, module: str, crate: str,
             "functions": item["summary"]["functions"]["count"],
             "functions_covered": item["summary"]["functions"]["covered"],
         }
-        for item in data.get("files", [])
+        for item in own
     ]
     return GateResult(
         "rust_coverage", True,
-        f"checks reach {percent:.1f}% of Rust lines and {totals['functions']['percent']:.1f}% of functions",
-        {"lines": percent, "functions": totals["functions"]["percent"], "files": sorted(files, key=lambda f: f["lines"])},
+        f"checks reach {lines_percent:.1f}% of Rust lines and {functions_percent:.1f}% of functions",
+        {"lines": lines_percent, "functions": functions_percent, "files": sorted(files, key=lambda f: f["lines"])},
     )
+
+
+def _percent(files: list[dict], kind: str) -> float:
+    count = sum(item["summary"][kind]["count"] for item in files)
+    covered = sum(item["summary"][kind]["covered"] for item in files)
+    return 100.0 * covered / count if count else 0.0

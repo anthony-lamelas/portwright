@@ -355,6 +355,11 @@ class Porter:
             if destination.exists():
                 shutil.rmtree(destination)
             shutil.copytree(Path(crate), destination, ignore=shutil.ignore_patterns("target", ".git"))
+            # A pycompat core crate sits at <port>/crates/<core>; its report is at <port>/.
+            for folder in (Path(crate), *Path(crate).resolve().parents[:2]):
+                if (folder / "CONFORMANCE.md").is_file():
+                    shutil.copy2(folder / "CONFORMANCE.md", destination / "CONFORMANCE.md")
+                    break
             frozen.update({f"vendor/{name}/{key}": value for key, value in hash_tree(destination).items()})
         if frozen:
             self.run_state.update(lambda d: d["shared"].update(frozen))
@@ -386,7 +391,8 @@ class Porter:
         return note + (
             f"\n\nAlready-ported building blocks are in {names}: finished crates that match Python 3.12 "
             "exactly and passed their own gates. Use them through a path dependency instead of rebuilding "
-            "what they do. Read their README and CONFORMANCE.md first. They're frozen; if one is missing "
+            "what they do. Read each one's CONFORMANCE.md first, for what it matched and where it differs. "
+            "They're frozen; if one is missing "
             "something, file a request."
         )
 

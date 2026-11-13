@@ -46,10 +46,10 @@ def count_rust_lines_file(path) -> int:
 
 
 def count_rust_lines(workspace) -> int:
-    """Count non-blank Rust lines outside build output and fuzz targets."""
+    """Count non-blank Rust lines the port owns: not build output, fuzz targets, or vendored crates."""
     total = 0
     for path in Path(workspace).rglob("*.rs"):
-        if {"target", "fuzz", "seed"} & set(path.parts):
+        if {"target", "fuzz", "seed", "vendor"} & set(Path(path).relative_to(workspace).parts):
             continue
         total += sum(1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip())
     return total
