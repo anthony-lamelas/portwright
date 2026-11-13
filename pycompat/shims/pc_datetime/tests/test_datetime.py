@@ -169,15 +169,112 @@ def test_fromisoformat():
         same(pc.time_fromisoformat, lambda s: t_out(dt.time.fromisoformat(s)), text)
 
 
-DIRECTIVES = list("aAbBcdfHIjmMpSUwWxXyYzZGuVeCDFgknrRtThl%") + [":z", "Q", "E", "O", "Ey", "Od", "-d", "_H", "0e", "^a", "#b"]
+DIRECTIVES = list("aAbBcdfHIjmMpSUwWxXyYzZGuV%") + [":z"]
+# GNU and C99 extras, flags and widths: the C library decides their output, so the shim refuses them.
+REFUSED_DIRECTIVES = list("eCDFgknrRtThlsPQEO") + ["Ey", "Od", "-d", "_d", "_H", "0e", "^a", "#b", "#Z", "10Y", "", ":", ":y", "\ud800", "\x00"]
+STRFTIME_REFUSED = "pc_datetime's strftime supports only the C89 and CPython-documented directives, without flags or widths"
 
 
 def test_strftime_every_directive():
     for d, directive in itertools.product(DATETIMES, DIRECTIVES):
         same(pc.strftime, lambda a, f: dt_in(a).strftime(f), d, f"%{directive}")
     for d in DATETIMES:
-        for fmt in ["", "plain", "%", "%%Y", "100%", "%Y-%m-%dT%H:%M:%S.%f%z", "%c|%x|%X", "%%%Y%%", "日%Y", "x\ud800%d", "\x00%d"]:
+        for fmt in ["", "plain", "%%Y", "%Y-%m-%dT%H:%M:%S.%f%z", "%c|%x|%X", "%%%Y%%", "日%Y", "x\ud800%d", "\x00%d", "%%-d", "%:z%%:"]:
             same(pc.strftime, lambda a, f: dt_in(a).strftime(f), d, fmt)
+
+
+def test_strftime_refuses_c_library_extensions():
+    """Review: GNU flags, widths and extra directives reached glibc, whose output varies by version."""
+    for directive in REFUSED_DIRECTIVES:
+        for fmt in [f"%{directive}", f"x %Y %{directive} y", f"%-d %_d %^a %#Z %10Y %k %P %s"]:
+            with pytest.raises(ValueError) as caught:
+                pc.strftime(DATETIMES[0], fmt)
+            assert str(caught.value) == STRFTIME_REFUSED, fmt
+    for fmt in ["%", "100%", "%Y%"]:
+        with pytest.raises(ValueError, match="C89"):
+            pc.strftime(DATETIMES[0], fmt)
+    # The datetime is checked before the format, as it's built before strftime runs.
+    same(pc.strftime, lambda a, f: dt_in(a).strftime(f), (2024, 13, 1, 0, 0, 0, 0, None, 0), "%k")
+
+
+VALUE_ARGS = [
+    (pc.date_toordinal, "date", 3, ()), (pc.weekday, "date", 3, ()), (pc.isocalendar, "date", 3, ()),
+    (pc.date_isoformat, "date", 3, ()), (pc.time_isoformat, "time", 6, ()),
+    (pc.datetime_isoformat, "datetime", 9, ()), (pc.strftime, "datetime", 9, ("%Y",)),
+    (pc.datetime_str, "datetime", 9, ()), (pc.datetime_repr, "datetime", 9, ()),
+    (pc.datetime_timestamp, "datetime", 9, ()), (pc.datetime_astimezone, "datetime", 9, (0,)),
+    (pc.timedelta_str, "timedelta", 3, ()), (pc.timedelta_repr, "timedelta", 3, ()),
+    (pc.timedelta_total_seconds, "timedelta", 3, ()), (pc.timedelta_multiply, "timedelta", 3, (2,)),
+]
+GOOD = {"date": (2024, 1, 1), "time": (1, 2, 3, 4, 0, 0), "datetime": (2024, 1, 1, 1, 2, 3, 4, 0, 0), "timedelta": (1, 2, 3)}
+
+
+def test_values_must_be_tuples_of_exact_length():
+    """Review: any subscriptable passed as a value, and extra fields were ignored."""
+    for func, kind, size, rest in VALUE_ARGS:
+        good = GOOD[kind]
+        func(good, *rest)
+        for bad in [list(good), dict(enumerate(good)), bytes(range(1, size + 1)), bytearray(range(1, size + 1)),
+                    good + (0,), good[:-1], (), None, 5, "2024-01-01"]:
+            with pytest.raises(TypeError) as caught:
+                func(bad, *rest)
+            assert str(caught.value).startswith(f"a {kind} must be a tuple ("), (func.__name__, bad)
+    with pytest.raises(TypeError, match=r"^a timedelta must be a tuple \(days, seconds, microseconds\)$"):
+        pc.date_add((2024, 1, 1), {0: 1, 1: 0, 2: 0})
+    with pytest.raises(TypeError, match="a date must be a tuple"):
+        pc.date_add(b"\x01\x02\x03", (0, 0, 0))
+    with pytest.raises(TypeError, match="a datetime must be a tuple"):
+        pc.datetime_add((2024, 1, 1, 0, 0, 0, 0, None, 0, 99), (1, 0, 0))
+    for func in (pc.timedelta_divide, pc.timedelta_floor_divide):
+        with pytest.raises(TypeError, match="a timedelta must be a tuple"):
+            func((1, 0, 0), (1, 0, 0, 0))
+        # A list divisor isn't a timedelta; it reaches timedelta's own TypeError, as any other non-number does.
+        same(func, lambda t, f: td_in(t) / f if func is pc.timedelta_divide else td_in(t) // f, (1, 0, 0), [1, 0, 0])
+
+
+def test_value_fields_must_be_ints():
+    """Fields are ints; bool counts, as it does for the constructors (make_date(2024, True, 1))."""
+    same(pc.date_toordinal, lambda a: dt.date(*a).toordinal(), (2024, True, 1))
+    same(pc.datetime_str, lambda a: str(dt_in(a)), (2024, 1, 1, 0, 0, 0, 0, None, True))
+    for func, value, message in [
+        (pc.date_toordinal, (2024.0, 1, 1), "date field year must be an int, not float"),
+        (pc.date_toordinal, (2024, "1", 1), "date field month must be an int, not str"),
+        (pc.datetime_str, (2024, 1, 1, 0, 0, 0, None, None, 0), "datetime field microsecond must be an int, not NoneType"),
+        (pc.datetime_str, (2024, 1, 1, 0, 0, 0, 0, None, None), "datetime field fold must be an int, not NoneType"),
+        (pc.time_isoformat, (1, 2, 3, 4.5, None, 0), "time field microsecond must be an int, not float"),
+        (pc.timedelta_str, (0, 0.5, 0), "timedelta field seconds must be an int, not float"),
+        (pc.timedelta_str, (0, 0, [1]), "timedelta field microseconds must be an int, not list"),
+    ]:
+        with pytest.raises(TypeError) as caught:
+            func(value)
+        assert str(caught.value) == message, value
+
+
+def test_float_utcoffsets_are_refused():
+    """Review: a float offset was accepted, and its fraction silently dropped."""
+    message = "utcoffset must be whole seconds as an int, or None, not float"
+    for call in [lambda: pc.make_time(1, 0, 0, 0, 0.5), lambda: pc.make_time(1, 0, 0, 0, 3600.0),
+                 lambda: pc.make_datetime(2024, 1, 1, utcoffset=1.5), lambda: pc.timezone_name(3600.0),
+                 lambda: pc.datetime_fromtimestamp(0, 0.25), lambda: pc.datetime_astimezone(GOOD["datetime"], 60.0),
+                 lambda: pc.datetime_str((2024, 1, 1, 0, 0, 0, 0, 0.5, 0)), lambda: pc.time_isoformat((1, 0, 0, 0, -0.5, 0))]:
+        with pytest.raises(TypeError) as caught:
+            call()
+        assert str(caught.value) == message
+    with pytest.raises(TypeError, match="utcoffset must be whole seconds as an int, or None, not str"):
+        pc.make_time(utcoffset="3600")
+    same(pc.make_time, lambda *a: t_out(dt.time(*a[:4], tz(a[4]))), 0, 0, 0, 0, True)
+
+
+def test_fromtimestamp_past_gmtime_is_a_fixed_error():
+    """Review: CPython raised OSError carrying the C library's strerror text."""
+    for stamp in [1e18, -1e18, 10**17, 2**62]:
+        for offset in [0, 3600]:
+            with pytest.raises(OverflowError) as caught:
+                pc.datetime_fromtimestamp(stamp, offset)
+            assert str(caught.value) == "timestamp out of range for the C library's gmtime"
+    # Errors CPython raises itself are unchanged.
+    for stamp in [1e20, 1e15, float("nan"), float("inf")]:
+        same(pc.datetime_fromtimestamp, lambda s, o: dt_out(dt.datetime.fromtimestamp(s, tz(o))), stamp, 0)
 
 
 STRPTIME = [("2024-02-29", "%Y-%m-%d"), ("2024-02-30", "%Y-%m-%d"), ("24-2-9", "%y-%m-%d"), ("69", "%y"), ("68", "%y"),
