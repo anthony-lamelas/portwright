@@ -46,6 +46,9 @@ def unreadable_attribute():
     error.me = error
     raise error
 
+def attribute_lookup():
+    return (1).nope
+
 def nan_sign():
     return float("nan")
 
@@ -77,6 +80,8 @@ CANDIDATE = REFERENCE.replace(
 ).replace(
     '    return float("nan")\n', '    return -float("nan")\n'
 ).replace(
+    '    return (1).nope\n', '    raise AttributeError("\'int\' object has no attribute \'nope\'")\n'
+).replace(
     'return struct_nan(0x7FF8000000000000)', 'return struct_nan(0x7FF8000000000001)'
 ).replace(
     'Pat("0x1f")', 'Pat("0xDEAD")'
@@ -87,7 +92,7 @@ from portwright.compare import same
 
 def test_outcomes():
     for name in ["homemade_error", "error_position", "stored_vs_getter", "unreadable_attribute",
-                 "nan_sign", "nan_payload", "hex_in_repr", "real_address"]:
+                 "attribute_lookup", "nan_sign", "nan_payload", "hex_in_repr", "real_address"]:
         same(name)
 '''
 
@@ -111,7 +116,7 @@ def divergences(tmp_path_factory):
     )
     result = differential_for(project, sides["port"]["path"], max_examples=1)
     assert not result.details["divergences"], result.details["divergences"]
-    assert result.details["calls"] == 8, result.summary
+    assert result.details["calls"] == 9, result.summary
     return set(result.details["approved_seen"])
 
 
@@ -131,7 +136,8 @@ def test_a_hidden_difference_is_found(divergences, api):
 
 def test_equal_outcomes_still_match(divergences):
     """A getter matches a stored attribute, unreadable and cyclic attributes don't
-    crash the worker, and real addresses are still masked."""
+    crash the worker, an explicit AttributeError matches a failed lookup, and real
+    addresses are still masked."""
     assert {signature.split()[0] for signature in divergences} == set(EXPECTED)
 
 

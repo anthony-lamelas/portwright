@@ -179,6 +179,10 @@ def _describe_exception(exc, depth=0, seen=()):
 
 
 _BASE_EXCEPTION_NAMES = frozenset(dir(BaseException))
+# Set by the interpreter only when its own lookup fails, for "Did you mean" hints;
+# AttributeError("...") raised explicitly, as a port does, leaves them None. The
+# message already names the attribute.
+_LOOKUP_HINTS = ((AttributeError, frozenset({"name", "obj"})), (NameError, frozenset({"name"})))
 
 
 def _exception_attributes(exc, depth, seen):
@@ -190,9 +194,10 @@ def _exception_attributes(exc, depth, seen):
     described is recorded as such instead of crashing the worker.
     """
     names = _safe(dir, exc)
+    hints = frozenset().union(*(skip for cls, skip in _LOOKUP_HINTS if isinstance(exc, cls)))
     found = {}
     for name in sorted(names) if isinstance(names, list) else ():  # not a list: dir raised
-        if name.startswith("_") or name in _BASE_EXCEPTION_NAMES:
+        if name.startswith("_") or name in _BASE_EXCEPTION_NAMES or name in hints:
             continue
         try:
             value = getattr(exc, name)
