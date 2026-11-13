@@ -21,12 +21,15 @@ import io
 import json
 import os
 import re
+import struct
 import sys
 import time
 
 ITER_LIMIT = 1000
 DEPTH_LIMIT = 40
-_ADDRESS = re.compile(r"0x[0-9a-fA-F]+")
+# Only memory addresses, as in "<Foo object at 0x7f...>". Masking every 0x token
+# made re.compile('0x1f') equal re.compile('0xDEAD').
+_ADDRESS = re.compile(r"(?<=\bat )0x[0-9a-fA-F]+")
 
 
 class PythonExpression:
@@ -49,6 +52,30 @@ def _int_text(value: int) -> str:
     """
     return str(value) if value.bit_length() < 13000 else hex(value)
 
+
+def _float_text(value: float) -> str:
+    """Exact text for a float: hex, or the raw bits for a NaN.
+
+    ``float.hex()`` is exact for every other float, but gives "nan" for every NaN,
+    so a NaN's sign and payload went uncompared.
+    """
+    if value == value:
+        return value.hex()
+    bits = struct.unpack("<Q", struct.pack("<d", value))[0]
+    return f"{'-' if bits >> 63 else ''}nan:{bits:#018x}"
+
+
+def _float_value(text: str) -> float:
+    if "nan:" in text:
+        return struct.unpack("<d", struct.pack("<Q", int(text.split(":")[1], 16)))[0]
+    return float.fromhex(text)
+
+
+def _class_name(cls) -> str:
+    """Module and qualified name, so a homemade ``ValueError`` isn't the real one."""
+    return f"{getattr(cls, '__module__', None)}.{cls.__qualname__}"
+
+
 def encode(value):
     """Turn an input value into JSON the other side can rebuild exactly."""
     if isinstance(value, PythonExpression):
@@ -61,7 +88,7 @@ def encode(value):
     if kind is int:
         return {"t": "int", "v": _int_text(value)}
     if kind is float:
-        return {"t": "float", "v": value.hex()}
+        return {"t": "float", "v": _float_text(value)}
     if kind is str:
         return {"t": "str", "v": value}
     if kind in (bytes, bytearray):
@@ -100,7 +127,7 @@ def decode(data, handles, evaluate=True):
     if tag == "int":
         return int(value, 0)
     if tag == "float":
-        return float.fromhex(value)
+        return _float_value(value)
     if tag == "str":
         return value
     if tag == "bytes":
@@ -139,14 +166,47 @@ class Handles:
         return self._ids[key]
 
 
-def _describe_exception(exc):
+def _describe_exception(exc, depth=0, seen=()):
+    seen = (*seen, id(exc))
     return {
         "kind": "raised",
         "type": type(exc).__qualname__,
-        "mro": [cls.__qualname__ for cls in type(exc).__mro__],
-        "args": canon(exc.args, Handles()),
+        "mro": [_class_name(cls) for cls in type(exc).__mro__],
+        "args": canon(exc.args, Handles(), depth + 1, seen),
         "message": _safe(str, exc),
+        "attributes": _exception_attributes(exc, depth, seen),
     }
+
+
+_BASE_EXCEPTION_NAMES = frozenset(dir(BaseException))
+# Set by the interpreter only when its own lookup fails, for "Did you mean" hints;
+# AttributeError("...") raised explicitly, as a port does, leaves them None. The
+# message already names the attribute.
+_LOOKUP_HINTS = ((AttributeError, frozenset({"name", "obj"})), (NameError, frozenset({"name"})))
+
+
+def _exception_attributes(exc, depth, seen):
+    """Public attributes beyond args, like ``re.error.pos`` or ``UnicodeError.start``.
+
+    Read with ``dir`` rather than ``vars``: built-in exceptions and Rust classes keep
+    them in slots or getters, not in ``__dict__``. Methods, private names and the
+    traceback and context dunders are left out. A value that can't be read or
+    described is recorded as such instead of crashing the worker.
+    """
+    names = _safe(dir, exc)
+    hints = frozenset().union(*(skip for cls, skip in _LOOKUP_HINTS if isinstance(exc, cls)))
+    found = {}
+    for name in sorted(names) if isinstance(names, list) else ():  # not a list: dir raised
+        if name.startswith("_") or name in _BASE_EXCEPTION_NAMES or name in hints:
+            continue
+        try:
+            value = getattr(exc, name)
+            if callable(value) and not isinstance(value, (type, BaseException)):
+                continue
+            found[name] = canon(value, Handles(), depth + 1, seen)
+        except BaseException as error:
+            found[name] = {"t": "unreadable", "v": type(error).__qualname__}
+    return found
 
 
 def _safe(func, value):
@@ -164,7 +224,8 @@ def canon(value, handles, depth=0, seen=()):
     """Describe a result so that two versions can be compared exactly.
 
     Types are part of the description, so ``1`` and ``1.0`` differ. Floats use
-    their exact hex form. Dicts keep their order and sets don't have one.
+    their exact hex form, or their bits for a NaN. Dicts keep their order and sets
+    don't have one.
     """
     if depth > DEPTH_LIMIT:
         return {"t": "too_deep"}
@@ -178,7 +239,7 @@ def canon(value, handles, depth=0, seen=()):
     if kind is int:
         return {"t": "int", "v": _int_text(value)}
     if kind is float:
-        return {"t": "float", "v": value.hex()}
+        return {"t": "float", "v": _float_text(value)}
     if kind is str:
         return {"t": "str", "v": value}
     if kind in (bytes, bytearray):
@@ -201,9 +262,9 @@ def canon(value, handles, depth=0, seen=()):
     if kind is dt.timedelta:
         return {"t": "timedelta", "v": [value.days, value.seconds, value.microseconds]}
     if kind is type:
-        return {"t": "class", "v": value.__qualname__}
+        return {"t": "class", "v": _class_name(value)}
     if isinstance(value, BaseException):
-        return {"t": "exception", "v": _describe_exception(value)}
+        return {"t": "exception", "v": _describe_exception(value, depth, seen)}
     if _is_iterator(value):
         return _drain(value, next_level)
     if callable(value) and hasattr(value, "__qualname__"):
@@ -211,6 +272,7 @@ def canon(value, handles, depth=0, seen=()):
     return {
         "t": "object",
         "class": kind.__qualname__,
+        "module": getattr(kind, "__module__", None),
         "repr": _ADDRESS.sub("0x_", _safe(repr, value)),
         "handle": handles.add(value),
     }
