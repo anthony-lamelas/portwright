@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import shutil
@@ -26,7 +27,9 @@ from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
 from portwright.manifest import extract_api
 from portwright.report import write_report
 from portwright.scaffold import crate_names, init_repo, write_scaffold
-from portwright.scheduler import BLOCKED, CONFLICT, MERGED, RETRY, TaskBoard, Workspaces, run_board
+from portwright.scheduler import (
+    BLOCKED, CONFLICT, MERGED, RETRY, MergeResult, TaskBoard, Workspaces, recover_landed, run_board,
+)
 from portwright.state import JsonStore, RunPaths, append_capped, atomic_write
 
 PHASES = ["intake", "checks", "design", "port", "harden", "fix_review", "cleanup", "performance", "final_review", "report"]
@@ -573,24 +576,22 @@ class Porter:
             path.rename(folder / f"done-{path.name}")
         return "\n".join(lines)
 
-    def _work_task(self, task_id: str) -> str | tuple[str, str]:
-        task = self.board.tasks()[task_id]
-        if task["attempts"] >= self.config.max_attempts:
-            return BLOCKED, f"gave up after {task['attempts']} attempts: {task['failure'][-1500:]}"
-        role = "debugger" if task["attempts"] >= self.config.debugger_after else "porter"
-        workspace = self.workspaces.create(task_id)
-        label = f"{task_id}-a{task['attempts'] + 1}"
-        result = self._agent(role, label, self._task_prompt(task_id, task, role), self._port_mounts(workspace, task_id), apis=task["apis"])
-        self.workspaces.commit(workspace, f"{role}: {task_id}, attempt {task['attempts'] + 1}")
-        notes = self._handle_requests()
-        if result.status != "ok" and not self.workspaces.changed_since_branch(workspace):
-            return RETRY, f"the session ended with {result.status}: {result.text[-800:]}\n{notes}"
+    def _gate_basis(self) -> str:
+        """A fingerprint of what a person can change that decides a task's gate: approved
+        differences and crates, and which files are frozen."""
+        state = self.run_state.read()
+        basis = {key: state.get(key) for key in ("approved_differences", "approved_crates", "shared")}
+        return hashlib.sha256(json.dumps(basis, sort_keys=True).encode()).hexdigest()[:16]
+
+    def _merge_task(self, task_id: str, workspace: Path, seed: int) -> MergeResult:
+        """Gate a task's work on fresh inputs and merge it if it passes."""
         done_apis = [api for t in self.board.tasks().values() if t["status"] == MERGED for api in t["apis"]]
-        seed = self.config.seed + task["attempts"] + 1  # inputs the agent's own preview didn't use
+        apis = self.board.tasks()[task_id]["apis"]
+        self.board.note(task_id, gate_basis=self._gate_basis())
 
         def gate(path: Path) -> tuple[bool, str]:
             verdict = verify(
-                self.project(), path, self._site(task_id), apis=[*done_apis, *task["apis"]],
+                self.project(), path, self._site(task_id), apis=[*done_apis, *apis],
                 upstream=False, seed=seed, max_examples=self.config.examples, target_dir=self._target(task_id),
             )
             for item in verdict.gates:
@@ -603,6 +604,42 @@ class Porter:
             self._log(f"  merged {task_id}")
             self.workspaces.discard(task_id)
             shutil.rmtree(self._target(task_id), ignore_errors=True)
+        return merged
+
+    def _regate_after_ruling(self, task_id: str, task: dict) -> MergeResult | None:
+        """After a person approves a difference, a crate or a frozen-file change, the
+        last rejected work may already pass. Check it before paying for a session."""
+        previous = task.get("gate_basis")
+        workspace = self.workspaces.worktrees / task_id
+        if previous is None or previous == self._gate_basis() or not workspace.exists():
+            return None
+        if not self.workspaces.changed_since_branch(workspace):
+            return None
+        self._log(f"  {task_id}: a person's ruling changed its gate since the last rejection; checking that work again first")
+        # Not a seed any agent session will see: the next attempt is gated on seed + attempts + 1.
+        return self._merge_task(task_id, workspace, self.config.seed + 100_000 + task["attempts"])
+
+    def _work_task(self, task_id: str) -> str | tuple[str, str]:
+        task = self.board.tasks()[task_id]
+        regated = self._regate_after_ruling(task_id, task)
+        if regated is not None:
+            if regated.merged:
+                return MERGED
+            # The next session should see the current failure, or the conflict markers it left.
+            task = {**task, "failure": regated.detail}
+        if task["attempts"] >= self.config.max_attempts:
+            return BLOCKED, f"gave up after {task['attempts']} attempts: {task['failure'][-1500:]}"
+        role = "debugger" if task["attempts"] >= self.config.debugger_after else "porter"
+        workspace = self.workspaces.create(task_id)
+        label = f"{task_id}-a{task['attempts'] + 1}"
+        result = self._agent(role, label, self._task_prompt(task_id, task, role), self._port_mounts(workspace, task_id), apis=task["apis"])
+        self.workspaces.commit(workspace, f"{role}: {task_id}, attempt {task['attempts'] + 1}")
+        notes = self._handle_requests()
+        if result.status != "ok" and not self.workspaces.changed_since_branch(workspace):
+            return RETRY, f"the session ended with {result.status}: {result.text[-800:]}\n{notes}"
+        seed = self.config.seed + task["attempts"] + 1  # inputs the agent's own preview didn't use
+        merged = self._merge_task(task_id, workspace, seed)
+        if merged.merged:
             return MERGED
         self._log(f"  rejected {task_id}: {merged.reason}")
         text = merged.detail if merged.reason == "gate" else f"Your work conflicts with work merged since you started:\n{merged.detail}"
@@ -648,6 +685,10 @@ class Porter:
 
     def _phase_port(self) -> None:
         self.board.release_all()  # claims left by a run that crashed or was killed
+        for task_id in recover_landed(self.board, self.workspaces):
+            self._log(f"  {task_id} had merged before the last stop; marked merged without running it again")
+            self.workspaces.discard(task_id)
+            shutil.rmtree(self._target(task_id), ignore_errors=True)
         run_board(self.board, self._work_task, max_agents=self.config.max_agents, on_error=lambda t, e: self._log(f"  harness error in {t}: {e}"))
         self._flush_regressions()
         unfinished = self.board.unfinished()

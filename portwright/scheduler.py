@@ -123,6 +123,23 @@ class TaskBoard:
     def unfinished(self) -> dict:
         return {k: v for k, v in self.tasks().items() if v["status"] != MERGED}
 
+    def note(self, task_id: str, **fields) -> None:
+        """Keep harness bookkeeping on a task, beside its status."""
+        self.store.update(lambda data: data["tasks"][task_id].update(fields))
+
+
+def recover_landed(board: TaskBoard, workspaces: "Workspaces") -> list[str]:
+    """Mark tasks merged whose work reached main before a stop kept the board from
+    saying so. Returns those tasks, so their leftovers can be cleaned up."""
+    recovered = []
+    for task_id, task in board.tasks().items():
+        if task["status"] != MERGED and workspaces.landed(task_id):
+            board.finish(task_id, MERGED)
+            recovered.append(task_id)
+        if task_id in recovered or task["status"] == MERGED:
+            workspaces.forget_landing(task_id)
+    return recovered
+
 
 def run_board(board: TaskBoard, worker, *, max_agents: int = 1, on_error=None) -> None:
     """Run tasks until none can start. ``worker(task_id)`` returns merged, retry, or blocked.
@@ -227,8 +244,26 @@ class Workspaces:
             # (fuzzing writes fuzz/Cargo.lock) can leave untracked files that block the
             # merge. Ignored caches such as target/ stay.
             self._git("clean", "-fdq")
+            # Mark what is about to land. The board records "merged" later, in another
+            # file, so a stop in between used to leave a merged task pending (open item K).
+            self._git("update-ref", self._landing_ref(name), self.revision(path))
             self._git("merge", "--ff-only", "-q", f"task/{name}")
             return MergeResult(True)
+
+    @staticmethod
+    def _landing_ref(name: str) -> str:
+        return f"refs/portwright/landing/{name}"
+
+    def landed(self, name: str) -> bool:
+        """Whether work for ``name`` passed its gate and reached main, even if the
+        process stopped before anything else recorded it."""
+        marker = self._git("rev-parse", "-q", "--verify", self._landing_ref(name), check=False).stdout.strip()
+        if not marker:
+            return False
+        return self._git("merge-base", "--is-ancestor", marker, self.branch, check=False).returncode == 0
+
+    def forget_landing(self, name: str) -> None:
+        self._git("update-ref", "-d", self._landing_ref(name), check=False)
 
     def _leave_conflicts(self, name: str, path) -> str:
         """Move the task onto the latest main, with any conflicts left as markers.
