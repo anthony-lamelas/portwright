@@ -148,3 +148,26 @@ def test_percent_with_infinities_and_huge_values():
     for template in ["%f", "%e", "%g", "%d", "%x", "%.3f", "%10.2e", "%+g"]:
         for value in (INF, -INF, NAN, 1e308, -1e-308, 2**100, -(2**100), 10**25):
             same(pc.percent_format, lambda t, v: t % v, template, value)
+
+
+SET_REFUSED = "pc_format doesn't support sets of str or bytes, whose order changes between processes"
+
+
+@pytest.mark.parametrize("value", [{"a", "b"}, frozenset({"a"}), {b"x", b"y"}, {1, "a"}, {("a", 1)}, {(1, (2, b"x"))},
+                                   frozenset({frozenset({"a"})}), {""}, [{"a"}], ({"a"},), {"k": frozenset({"a"})}])
+def test_sets_of_str_or_bytes_are_refused(value):
+    """Review: their order follows the per-process hash seed, so str() of one differed from run to run."""
+    for call in [lambda: pc.format_value(value, ""), lambda: pc.str_format("{}", (value,)),
+                 lambda: pc.str_format("{x}", (), {"x": value}), lambda: pc.percent_format("%s", (value,)),
+                 lambda: pc.percent_format("%(k)s", {"k": value})]:
+        with pytest.raises(TypeError) as caught:
+            call()
+        assert str(caught.value) == SET_REFUSED
+
+
+@pytest.mark.parametrize("value", [set(), frozenset(), {1, 2, 3}, {0, 8, 16, -1}, {1.5, None, True, 2**70},
+                                   {(1, 2), (None,)}, frozenset({frozenset({1})}), {"a": 1, b"b": [2]}, ["a", (b"b",)]])
+def test_sets_without_str_or_bytes_still_format(value):
+    same(pc.format_value, format, value, "")
+    same(pc.str_format, lambda t, a: t.format(*a), "{!r}", (value,))
+    same(pc.percent_format, lambda t, v: t % v, "%s", (value,))

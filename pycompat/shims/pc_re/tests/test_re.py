@@ -147,3 +147,61 @@ def test_non_str_arguments_are_rejected():
         with pytest.raises(TypeError) as caught:
             pc.search(*args)
         assert str(caught.value) == message
+
+
+PATTERN_FUNCTIONS = [
+    (pc.pattern_search, "search", ("a",)), (pc.pattern_match, "match", ("a",)),
+    (pc.pattern_fullmatch, "fullmatch", ("a",)), (pc.pattern_findall, "findall", ("a",)),
+    (pc.pattern_finditer, "finditer", ("a",)), (pc.pattern_sub, "sub", ("x", "a")), (pc.pattern_subn, "subn", ("x", "a")),
+    (pc.pattern_split, "split", ("a",)), (pc.pattern_text, "pattern", ()), (pc.pattern_flags, "flags", ()),
+    (pc.pattern_groups, "groups", ()), (pc.pattern_groupindex, "groupindex", ()),
+]
+MATCH_FUNCTIONS = [
+    (pc.match_group, "group", ()), (pc.match_groups, "groups", ()), (pc.match_groupdict, "groupdict", ()),
+    (pc.match_start, "start", ()), (pc.match_end, "end", ()), (pc.match_span, "span", ()),
+    (pc.match_expand, "expand", ("x",)), (pc.match_lastindex, "lastindex", ()), (pc.match_lastgroup, "lastgroup", ()),
+    (pc.match_pos, "pos", ()), (pc.match_endpos, "endpos", ()), (pc.match_string, "string", ()),
+]
+# Type names as CPython prints them in attribute errors; RegexFlag is an int to the port.
+BAD_VALUES = [("a", "str"), (None, "NoneType"), (1, "int"), (True, "bool"), (b"a", "bytes"), (["a"], "list"),
+              ((0, 1), "tuple"), ({"k": 1}, "dict"), (re.I, "int")]
+
+
+def test_pattern_and_match_arguments_are_type_checked():
+    """Review: a str ``p`` ran ``str.split`` and a Match ``p`` gave a bound method.
+
+    The shim now raises, from a fixed table and without touching the object, the error
+    the finished port raises: the method lookup's AttributeError, or TypeError for a
+    Pattern's data attribute that a Match method shares a name with.
+    """
+    pattern, match = pc.compile("(a)"), pc.search("(a)", "a")
+    for func, attr, rest in PATTERN_FUNCTIONS:
+        func(pattern, *rest)
+        for bad, name in BAD_VALUES + [(match, "re.Match")]:
+            with pytest.raises(AttributeError) as caught:
+                func(bad, *rest)
+            assert str(caught.value) == f"'{name}' object has no attribute '{attr}'", (func.__name__, bad)
+    for func, attr, rest in MATCH_FUNCTIONS:
+        func(match, *rest)
+        for bad, name in BAD_VALUES + [(pattern, "re.Pattern")]:
+            expected = (TypeError, "'int' object is not callable") if (bad is pattern and attr == "groups") else (
+                AttributeError, f"'{name}' object has no attribute '{attr}'")
+            with pytest.raises(expected[0]) as caught:
+                func(bad, *rest)
+            assert str(caught.value) == expected[1], (func.__name__, bad)
+    with pytest.raises(AttributeError, match="^'str' object has no attribute 'split'$"):
+        pc.pattern_split("a,b,,c", ",", 2)
+    with pytest.raises(AttributeError, match="^'re.Match' object has no attribute 'groups'$"):
+        pc.pattern_groups(match)
+    with pytest.raises(TypeError, match="^'int' object is not callable$"):
+        pc.match_groups(pattern)
+    # As in the port: the string is checked before the pattern in search/match/.../split,
+    # the pattern before repl and string in sub/subn, the match before expand's template.
+    with pytest.raises(TypeError, match="^string must be str, not bytes$"):
+        pc.pattern_split(1, b"a")
+    with pytest.raises(TypeError, match="^string must be str, not bytes$"):
+        pc.pattern_search(1, b"a")
+    with pytest.raises(AttributeError, match="^'int' object has no attribute 'sub'$"):
+        pc.pattern_sub(1, b"x", b"a")
+    with pytest.raises(AttributeError, match="^'int' object has no attribute 'expand'$"):
+        pc.match_expand(1, b"x")

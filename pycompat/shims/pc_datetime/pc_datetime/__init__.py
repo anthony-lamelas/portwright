@@ -9,8 +9,10 @@ objects:
 - a datetime is ``(year, month, day, hour, minute, second, microsecond, utcoffset, fold)``
 - a timedelta is ``(days, seconds, microseconds)``
 
-``utcoffset`` is whole seconds east of UTC, or None for a naive value. Microseconds
-in offsets aren't supported. Functions that depend on the machine's local time zone
+Each must be a tuple of exactly those fields, all ints (bool counts as int, as in the
+constructors); anything else raises TypeError. ``utcoffset`` is whole seconds east of
+UTC as an int, or None for a naive value. Fractional offsets aren't supported, so a
+float offset raises TypeError. Functions that depend on the machine's local time zone
 are left out, because their results would differ between machines. For the same
 reason the process is pinned to UTC on import: ``strptime``'s ``%Z`` accepts the local
 zone's names, so "CST" would parse on one machine and fail on another.
@@ -67,6 +69,8 @@ def _builtins_only(function):
 def _tz(offset):
     if offset is None:
         return None
+    if not isinstance(offset, int):
+        raise TypeError(f"utcoffset must be whole seconds as an int, or None, not {type(offset).__name__}")
     return _dt.timezone(_dt.timedelta(seconds=offset))
 
 
@@ -84,10 +88,45 @@ def _dt_out(d):
 
 
 def _td_out(td): return (td.days, td.seconds, td.microseconds)
-def _date_in(d): return _dt.date(*d)
-def _time_in(t): return _dt.time(t[0], t[1], t[2], t[3], _tz(t[4]), fold=t[5])
-def _dt_in(d): return _dt.datetime(d[0], d[1], d[2], d[3], d[4], d[5], d[6], _tz(d[7]), fold=d[8])
-def _td_in(td): return _dt.timedelta(days=td[0], seconds=td[1], microseconds=td[2])
+
+
+def _fields(value, kind, names, offset=None):
+    """``value`` if it's a tuple of exactly ``names``, all ints (bool counts, as in the
+    constructors) except the ``utcoffset`` field at index ``offset``, which ``_tz`` checks.
+
+    Anything else would reach CPython's own handling of other types: indexing a dict or
+    bytes, ignoring extra fields, or float seconds in a timedelta.
+    """
+    if type(value) is not tuple or len(value) != len(names):
+        raise TypeError(f"a {kind} must be a tuple ({', '.join(names)})")
+    for index, (name, field) in enumerate(zip(names, value)):
+        if index != offset and not isinstance(field, int):
+            raise TypeError(f"{kind} field {name} must be an int, not {type(field).__name__}")
+    return value
+
+
+_DATE = ("year", "month", "day")
+_TIME = ("hour", "minute", "second", "microsecond", "utcoffset", "fold")
+_DATETIME = _DATE + _TIME
+_TIMEDELTA = ("days", "seconds", "microseconds")
+
+
+def _date_in(d): return _dt.date(*_fields(d, "date", _DATE))
+
+
+def _time_in(t):
+    t = _fields(t, "time", _TIME, offset=4)
+    return _dt.time(t[0], t[1], t[2], t[3], _tz(t[4]), fold=t[5])
+
+
+def _dt_in(d):
+    d = _fields(d, "datetime", _DATETIME, offset=7)
+    return _dt.datetime(d[0], d[1], d[2], d[3], d[4], d[5], d[6], _tz(d[7]), fold=d[8])
+
+
+def _td_in(td):
+    td = _fields(td, "timedelta", _TIMEDELTA)
+    return _dt.timedelta(days=td[0], seconds=td[1], microseconds=td[2])
 
 
 @_builtins_only
@@ -125,13 +164,13 @@ def timedelta_multiply(td, factor): return _td_out(_td_in(td) * factor)
 @_builtins_only
 def timedelta_divide(td, divisor):
     """``td / divisor``: a timedelta for a number, a float for a timedelta given as a tuple."""
-    result = _td_in(td) / (_td_in(divisor) if isinstance(divisor, tuple) else divisor)
+    result = _td_in(td) / (_td_in(divisor) if type(divisor) is tuple else divisor)
     return _td_out(result) if isinstance(result, _dt.timedelta) else result
 
 
 @_builtins_only
 def timedelta_floor_divide(td, divisor):
-    result = _td_in(td) // (_td_in(divisor) if isinstance(divisor, tuple) else divisor)
+    result = _td_in(td) // (_td_in(divisor) if type(divisor) is tuple else divisor)
     return _td_out(result) if isinstance(result, _dt.timedelta) else result
 
 
@@ -182,10 +221,39 @@ def time_fromisoformat(text): return _time_out(_dt.time.fromisoformat(text))
 def datetime_fromisoformat(text): return _dt_out(_dt.datetime.fromisoformat(text))
 
 
+# The C89 directives plus those CPython documents (%f, %z, %:z, %G, %u, %V). Anything
+# else, and any flag or width such as %-d or %10Y, goes to the C library's strftime,
+# whose output differs between C libraries and versions.
+_STRFTIME_DIRECTIVES = frozenset("aAbBcdfGHIjmMpSuUVwWxXyYzZ%")
+
+
+def _check_strftime_format(fmt):
+    i = 0
+    while i < len(fmt):
+        if fmt[i] == "%":
+            if fmt[i + 1:i + 3] == ":z":
+                i += 3
+                continue
+            if fmt[i + 1:i + 2] not in _STRFTIME_DIRECTIVES:
+                raise ValueError("pc_datetime's strftime supports only the C89 and CPython-documented "
+                                 "directives, without flags or widths")
+            i += 2
+        else:
+            i += 1
+
+
 @_builtins_only
 def strftime(d, fmt):
-    """``datetime.strftime(fmt)`` in the C locale, which Python leaves LC_TIME at."""
-    return _dt_in(d).strftime(fmt)
+    """``datetime.strftime(fmt)`` in the C locale, which Python leaves LC_TIME at.
+
+    Only the C89 directives and those CPython documents are supported: %a %A %b %B %c
+    %d %f %G %H %I %j %m %M %p %S %u %U %V %w %W %x %X %y %Y %z %:z %Z %%. Others, and
+    flags or widths, raise ValueError, because the C library would decide their output.
+    """
+    value = _dt_in(d)
+    if type(fmt) is str:
+        _check_strftime_format(fmt)
+    return value.strftime(fmt)
 
 
 @_builtins_only
@@ -205,22 +273,32 @@ def timezone_name(utcoffset): return _tz(utcoffset).tzname(None)
 @_builtins_only
 def datetime_timestamp(d):
     """``timestamp()`` for an aware datetime. Naive values would use local time, so they're refused."""
-    if d[7] is None:
+    if _fields(d, "datetime", _DATETIME, offset=7)[7] is None:
         raise ValueError("naive datetimes depend on the local time zone and aren't supported")
     return _dt_in(d).timestamp()
 
 
 @_builtins_only
 def datetime_fromtimestamp(timestamp, utcoffset):
-    """``datetime.fromtimestamp(timestamp, timezone(offset))``."""
+    """``datetime.fromtimestamp(timestamp, timezone(offset))``.
+
+    Where the C library's ``gmtime`` fails (a year past what its ``int`` holds, such as
+    ``1e18``), CPython raises OSError with the C library's message. That becomes a fixed
+    OverflowError.
+    """
     if utcoffset is None:
         raise ValueError("a UTC offset is required; local time isn't supported")
-    return _dt_out(_dt.datetime.fromtimestamp(timestamp, _tz(utcoffset)))
+    tz = _tz(utcoffset)
+    try:
+        value = _dt.datetime.fromtimestamp(timestamp, tz)
+    except OSError:
+        raise OverflowError("timestamp out of range for the C library's gmtime") from None
+    return _dt_out(value)
 
 
 @_builtins_only
 def datetime_astimezone(d, utcoffset):
     """``astimezone(timezone(offset))`` for an aware datetime."""
-    if d[7] is None or utcoffset is None:
+    if _fields(d, "datetime", _DATETIME, offset=7)[7] is None or utcoffset is None:
         raise ValueError("both offsets are required; local time isn't supported")
     return _dt_out(_dt_in(d).astimezone(_tz(utcoffset)))

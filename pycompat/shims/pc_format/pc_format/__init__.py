@@ -8,6 +8,10 @@ Arguments must be core built-in values: None, bool, int, float, str, bytes, byte
 and lists, tuples, sets, frozensets and dicts of them. Anything else, such as a
 Decimal or Fraction, raises TypeError. Those types bring their own formatting and
 arithmetic from their own modules, which this package doesn't cover.
+
+Sets and frozensets holding str or bytes (directly or in a tuple or frozenset) also
+raise TypeError. Their iteration order follows the per-process hash seed, so ``str``
+of one would differ from run to run.
 """
 
 import _string
@@ -23,6 +27,16 @@ __all__ = [
 _BUILTIN_TYPES = (type(None), bool, int, float, str, bytes, bytearray, list, tuple, set, frozenset, dict)
 
 
+def _hash_randomized(value):
+    """Whether ``value``'s hash depends on the process's hash seed: a str or bytes, or a
+    tuple or frozenset holding one."""
+    if type(value) in (str, bytes):
+        return True
+    if type(value) in (tuple, frozenset):
+        return any(_hash_randomized(item) for item in value)
+    return False
+
+
 def _check_builtin(value):
     if type(value) not in _BUILTIN_TYPES:
         raise TypeError(f"pc_format supports built-in types only, not {type(value).__name__}")
@@ -33,6 +47,8 @@ def _check_builtin(value):
     elif type(value) in (list, tuple, set, frozenset):
         for item in value:
             _check_builtin(item)
+        if type(value) in (set, frozenset) and any(_hash_randomized(item) for item in value):
+            raise TypeError("pc_format doesn't support sets of str or bytes, whose order changes between processes")
 
 
 def _builtins_only(function):
