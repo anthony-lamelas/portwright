@@ -3,11 +3,11 @@
 from __future__ import annotations
 
 import json
-import tempfile
 from pathlib import Path
 
 import coverage as coverage_api
 
+from portwright import isolation
 from portwright.gates import GateResult
 from portwright.gates.differential import REPO_ROOT, run_checks
 from portwright.toolchain import run_in_toolchain
@@ -15,10 +15,11 @@ from portwright.toolchain import run_in_toolchain
 
 def coverage_gate(checks_dir, side: dict, *, minimum: float = 80.0, seed: int = 0, max_examples: int = 200) -> GateResult:
     """Fail if the checks reach too little of the original, by branch coverage."""
-    with tempfile.TemporaryDirectory(prefix="porter-coverage-") as scratch:
+    with isolation.scratch("porter-coverage-") as scratch:
         data = str(Path(scratch) / "data")
         run = run_checks(
-            checks_dir, {**side, "coverage_file": data}, side, seed=seed, max_examples=max_examples
+            checks_dir, {**side, "coverage_file": data}, side, seed=seed, max_examples=max_examples,
+            writable=[scratch],
         )
         collector = coverage_api.Coverage(data_file=str(Path(scratch) / "combined"), branch=True)
         try:

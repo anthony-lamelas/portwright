@@ -6,12 +6,11 @@ import ast
 import hashlib
 import os
 import shutil
-import subprocess
 import sys
-import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+from portwright import isolation
 from portwright.gates import GateResult
 
 MOCK_NAMES = {"mock", "Mock", "MagicMock", "patch", "monkeypatch"}
@@ -78,22 +77,26 @@ def private_test_names(tests_dir: str | Path) -> set[str]:
 
 def run_tests(tests_dir: str | Path, side: dict, *, timeout: float = 900.0) -> dict[str, str]:
     """Run tests against one version and return ``{test id: passed|failed}``."""
-    with tempfile.TemporaryDirectory(prefix="porter-upstream-") as scratch:
+    with isolation.scratch("porter-upstream-") as scratch:
         scratch = Path(scratch)
         shutil.copytree(tests_dir, scratch / "tests", dirs_exist_ok=True)
         report = scratch / "report.xml"
-        env = {
-            key: value for key, value in os.environ.items()
-            if not key.startswith(("PORTER_", "PYTEST_"))
-        }
-        env["PYTHONPATH"] = str(Path(side["path"]).resolve())
-        done = subprocess.run(
+        library = str(Path(side["path"]).resolve())
+        if isolation.enabled():
+            env = {"PYTHONPATH": library}
+        else:
+            env = {
+                key: value for key, value in os.environ.items()
+                if not key.startswith(("PORTER_", "PYTEST_"))
+            }
+            env["PYTHONPATH"] = library
+        done = isolation.run(
             [
-                side.get("python", sys.executable), "-m", "pytest", "tests",
+                isolation.python(side.get("python", sys.executable)), "-m", "pytest", "tests",
                 "-q", "-p", "no:cacheprovider", "--import-mode=importlib",
                 "-c", os.devnull, "--rootdir", str(scratch), f"--junitxml={report}",
             ],
-            cwd=scratch, env=env, capture_output=True, text=True, timeout=timeout, check=False,
+            cwd=scratch, env=env, timeout=timeout, read=[library],
         )
         if not report.exists():
             raise RuntimeError(f"tests didn't run: {(done.stdout + done.stderr)[-2000:]}")

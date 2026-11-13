@@ -6,10 +6,10 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from portwright import isolation
 from portwright.gates import GateResult
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -42,12 +42,20 @@ def run_checks(
     stop_at_first: bool = False,
     run_timeout: float = 1800.0,
     approved: list[str] | tuple = (),
+    writable=(),
 ) -> CheckRun:
-    """Run the check files in a separate process and collect their results."""
+    """Run the check files in a separate process and collect their results.
+
+    The checks, and both versions they compare, run inside the toolchain image
+    (see ``portwright.isolation``). ``writable`` lists folders they may write to,
+    such as where coverage data goes.
+    """
     checks_dir = Path(checks_dir).resolve()
     reference = {**reference, "path": str(Path(reference["path"]).resolve())}
     candidate = {**candidate, "path": str(Path(candidate["path"]).resolve())}
-    with tempfile.TemporaryDirectory(prefix="portwright-checks-") as scratch:
+    for side in (reference, candidate):
+        side["python"] = isolation.python(side.get("python", sys.executable))
+    with isolation.scratch("portwright-checks-") as scratch:
         results = Path(scratch) / "results.json"
         config = Path(scratch) / "config.json"
         config.write_text(
@@ -63,7 +71,7 @@ def run_checks(
             )
         )
         command = [
-            sys.executable, "-m", "pytest", str(checks_dir),
+            isolation.python(sys.executable), "-m", "pytest", str(checks_dir),
             "-p", "portwright.compare.pytest_plugin",
             "-p", "no:cacheprovider",
             "--rootdir", str(checks_dir),
@@ -73,11 +81,11 @@ def run_checks(
         ]
         if stop_at_first:
             command.append("-x")
-        env = {**os.environ, "PORTER_CONFIG": str(config), "PYTHONPATH": str(REPO_ROOT)}
+        env = {"PORTER_CONFIG": str(config), "PYTHONPATH": str(REPO_ROOT)}
         try:
-            done = subprocess.run(
-                command, cwd=scratch, env=env, capture_output=True, text=True,
-                timeout=run_timeout, check=False,
+            done = isolation.run(
+                command, cwd=scratch, env=env, timeout=run_timeout,
+                read=[checks_dir, reference["path"], candidate["path"]], write=writable,
             )
         except subprocess.TimeoutExpired:
             return CheckRun(exit_status=-1, output="check run timed out")
