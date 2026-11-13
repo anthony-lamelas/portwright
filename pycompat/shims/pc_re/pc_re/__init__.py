@@ -10,7 +10,9 @@ and lists, tuples, sets, frozensets and dicts of them (plus re flags, and compil
 patterns and matches from this package). Anything else, such as a
 Decimal, raises TypeError, because its behavior comes from its own module.
 The ``p`` of ``pattern_*`` functions must be a compiled pattern and the ``m`` of
-``match_*`` functions a match object; anything else raises TypeError.
+``match_*`` functions a match object. Anything else raises the error the method lookup
+would (AttributeError, or TypeError for a Pattern's data attribute), from a fixed table
+and without touching the object.
 """
 
 import re as _re
@@ -68,25 +70,42 @@ def _text(value, what):
     return value
 
 
-def _pattern(value):
-    """``value`` if it's a compiled pattern. Anything else would reach its own methods or
-    attributes: a str ``p`` would run ``str.split``, and a Match ``p`` would hand back a
-    bound method."""
+# Type names as CPython prints them in attribute errors. RegexFlag counts as int, as the
+# port converts it. Every other admitted type is a built-in, named by its __name__.
+_TYPE_NAMES = {_re.Pattern: "re.Pattern", _re.Match: "re.Match", _re.RegexFlag: "int"}
+# Pattern's data attributes that share a name with a Match method: calling one raises
+# TypeError for the attribute's type instead of AttributeError.
+_PATTERN_DATA = {"groups": "int", "flags": "int", "pattern": "str", "groupindex": "mappingproxy"}
+
+
+def _no_attribute(value, attr):
+    name = _TYPE_NAMES.get(type(value), type(value).__name__)
+    return AttributeError(f"'{name}' object has no attribute '{attr}'")
+
+
+def _pattern(value, method):
+    """``value`` if it's a compiled pattern, else the error ``value.method`` would raise.
+
+    The error is built from a fixed table, without touching ``value``: a str ``p`` would
+    otherwise run ``str.split``, and a Match ``p`` would hand back a bound method.
+    """
     if type(value) is not _re.Pattern:
-        raise TypeError(f"p must be a compiled pattern, not {type(value).__name__}")
+        raise _no_attribute(value, method)
     return value
 
 
-def _match(value):
-    """``value`` if it's a match object, for the same reason as ``_pattern``."""
+def _match(value, method):
+    """``value`` if it's a match object, else the error ``value.method(...)`` would raise."""
     if type(value) is not _re.Match:
-        raise TypeError(f"m must be a match object, not {type(value).__name__}")
+        if type(value) is _re.Pattern and method in _PATTERN_DATA:
+            raise TypeError(f"'{_PATTERN_DATA[method]}' object is not callable")
+        raise _no_attribute(value, method)
     return value
 
 
 def _window(p, method, string, pos, endpos):
-    _pattern(p)
     _text(string, "string")
+    _pattern(p, method)
     return getattr(p, method)(string, pos) if endpos is None else getattr(p, method)(string, pos, endpos)
 
 
@@ -156,50 +175,51 @@ def pattern_finditer(p, string, pos=0, endpos=None): return list(_window(p, "fin
 
 @_builtins_only
 def pattern_sub(p, repl, string, count=0):
-    return _pattern(p).sub(_text(repl, "repl"), _text(string, "string"), count)
+    return _pattern(p, "sub").sub(_text(repl, "repl"), _text(string, "string"), count)
 
 
 @_builtins_only
 def pattern_subn(p, repl, string, count=0):
-    return _pattern(p).subn(_text(repl, "repl"), _text(string, "string"), count)
+    return _pattern(p, "subn").subn(_text(repl, "repl"), _text(string, "string"), count)
 
 
 @_builtins_only
 def pattern_split(p, string, maxsplit=0):
-    return _pattern(p).split(_text(string, "string"), maxsplit)
+    string = _text(string, "string")
+    return _pattern(p, "split").split(string, maxsplit)
 
 
 @_builtins_only
-def pattern_text(p): return _pattern(p).pattern
+def pattern_text(p): return _pattern(p, "pattern").pattern
 @_builtins_only
-def pattern_flags(p): return _pattern(p).flags
+def pattern_flags(p): return _pattern(p, "flags").flags
 @_builtins_only
-def pattern_groups(p): return _pattern(p).groups
+def pattern_groups(p): return _pattern(p, "groups").groups
 @_builtins_only
-def pattern_groupindex(p): return dict(_pattern(p).groupindex)
+def pattern_groupindex(p): return dict(_pattern(p, "groupindex").groupindex)
 
 
 @_builtins_only
-def match_group(m, *groups): return _match(m).group(*groups)
+def match_group(m, *groups): return _match(m, "group").group(*groups)
 @_builtins_only
-def match_groups(m, default=None): return _match(m).groups(default)
+def match_groups(m, default=None): return _match(m, "groups").groups(default)
 @_builtins_only
-def match_groupdict(m, default=None): return _match(m).groupdict(default)
+def match_groupdict(m, default=None): return _match(m, "groupdict").groupdict(default)
 @_builtins_only
-def match_start(m, group=0): return _match(m).start(group)
+def match_start(m, group=0): return _match(m, "start").start(group)
 @_builtins_only
-def match_end(m, group=0): return _match(m).end(group)
+def match_end(m, group=0): return _match(m, "end").end(group)
 @_builtins_only
-def match_span(m, group=0): return _match(m).span(group)
+def match_span(m, group=0): return _match(m, "span").span(group)
 @_builtins_only
-def match_expand(m, template): return _match(m).expand(_text(template, "template"))
+def match_expand(m, template): return _match(m, "expand").expand(_text(template, "template"))
 @_builtins_only
-def match_lastindex(m): return _match(m).lastindex
+def match_lastindex(m): return _match(m, "lastindex").lastindex
 @_builtins_only
-def match_lastgroup(m): return _match(m).lastgroup
+def match_lastgroup(m): return _match(m, "lastgroup").lastgroup
 @_builtins_only
-def match_pos(m): return _match(m).pos
+def match_pos(m): return _match(m, "pos").pos
 @_builtins_only
-def match_endpos(m): return _match(m).endpos
+def match_endpos(m): return _match(m, "endpos").endpos
 @_builtins_only
-def match_string(m): return _match(m).string
+def match_string(m): return _match(m, "string").string
