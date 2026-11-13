@@ -9,7 +9,7 @@ from pathlib import Path
 
 from portwright.gates import GateResult
 from portwright.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
-from portwright.gates.integrity import hash_tree, integrity_gate
+from portwright.gates.integrity import hash_tree, integrity_gate, site_problems
 from portwright.gates.license import license_gate
 from portwright.gates.rust_quality import rust_quality_gate
 from portwright.gates.upstream_tests import upstream_gate
@@ -182,8 +182,10 @@ def verify(
         return Verification(False, gates)
     gates.append(GateResult("build", True, "the Python package builds", {}))
     site_text = str(Path(site).resolve())
-    if not list(Path(site_text).rglob("*.so")):
-        gates.append(GateResult("build", False, "the built package has no compiled module", {}))
+    # Checked before anything imports the package: maturin can be told to pack Python.
+    unpacked = site_problems(site_text, project.module)
+    if unpacked:
+        gates.append(GateResult("build", False, "the built package holds more than the compiled module", {"problems": unpacked}))
         return Verification(False, gates)
     if not done(differential_for(project, site_text, apis=apis, seed=seed, max_examples=max_examples)):
         return Verification(False, gates, site_text)

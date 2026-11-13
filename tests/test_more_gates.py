@@ -352,4 +352,5 @@ def test_strict_bindings_leave_the_core_free_to_name_its_own_repr(tmp_path):
     core = port / "crates/textkit-core/src/lib.rs"
     core.write_text(core.read_text() + "\npub fn show(x: &Thing) -> String { x.repr() }\npub struct Thing;\nimpl Thing { pub fn repr(&self) -> String { String::new() } }\n")
     result = check_integrity(port, strict_bindings=True, bindings_dir="crates/textkit-py")
-    assert not any("calls into Python" in problem for problem in result.details["problems"])
+    # The fixture's bindings aren't strict themselves; only the core matters here.
+    assert not any("textkit-core" in problem for problem in result.details["problems"]), result.details
