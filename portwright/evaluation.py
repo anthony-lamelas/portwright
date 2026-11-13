@@ -78,9 +78,12 @@ def signature_api(signature: str) -> str:
 def differential_for(project: Project, site: str, *, apis=None, seed=0, max_examples=150, timeout=10.0) -> GateResult:
     """Compare with the original, counting only differences in ``apis`` while work is partial."""
     candidate = {**project.reference, "path": site}
-    run = run_checks(project.checks, project.reference, candidate, seed=seed, max_examples=max_examples, timeout=timeout)
-    wanted = None if apis is None else set(apis)
     approved = set(project.approved_differences)
+    run = run_checks(
+        project.checks, project.reference, candidate, seed=seed, max_examples=max_examples, timeout=timeout,
+        approved=sorted(approved),
+    )
+    wanted = None if apis is None else set(apis)
     blocking = {
         signature: entry for signature, entry in run.divergences.items()
         if signature not in approved and (wanted is None or signature_api(signature) in wanted)
@@ -97,9 +100,11 @@ def differential_for(project: Project, site: str, *, apis=None, seed=0, max_exam
         details["output"] = run.output[-3000:]
         return GateResult("differential", False, f"checks did not run (pytest exit {run.exit_status})", details)
     unexplained = []
-    if run.exit_status == PYTEST_EXIT_TESTS_FAILED and not run.divergences:
+    # Approved differences don't fail a check, so they can't explain a failure.
+    unapproved = set(run.divergences) - approved
+    if run.exit_status == PYTEST_EXIT_TESTS_FAILED and not unapproved:
         unexplained = run.failures
-    elif wanted is None and run.failures and not blocking and not details["approved_seen"]:
+    elif wanted is None and run.failures and not blocking:
         unexplained = run.failures
     if unexplained:
         details["other_failures"] = unexplained

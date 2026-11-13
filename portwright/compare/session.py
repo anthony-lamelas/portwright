@@ -193,11 +193,15 @@ class Pair:
 class Session:
     """Compares two versions call by call, and counts what each API really did."""
 
-    def __init__(self, reference: Side, candidate: Side, timeout: float = DEFAULT_TIMEOUT):
+    def __init__(self, reference: Side, candidate: Side, timeout: float = DEFAULT_TIMEOUT, approved=()):
         self.reference = Worker(reference, timeout)
         self.candidate = Worker(candidate, timeout)
         self.stats: dict[str, dict] = {}
         self.divergences: dict[str, dict] = {}
+        # Differences a person approved are still recorded, but don't stop the check.
+        # Raising on them ended each test at its first approved difference, so every
+        # call after it went unchecked.
+        self.approved = frozenset(approved)
 
     def start(self) -> None:
         self.reference.start()
@@ -295,6 +299,8 @@ class Session:
             }
         except TypeError:
             entry.pop("input", None)  # calls on stored objects can't be replayed alone
+        if signature in self.approved:
+            return
         raise Divergence(message)
 
 

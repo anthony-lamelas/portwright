@@ -818,6 +818,7 @@ class Porter:
                 mutation_gate(
                     self.paths.port, self.paths.checks, self.reference, f"crates/{self.py_crate}", self.paths.build / "mutation",
                     sample=config.mutation_sample, minimum=config.mutation_minimum, seed=seed, target_dir=self._target("mutation"),
+                    approved=self.run_state.read()["approved_differences"],
                 )
             )
             missed = mutation.details.get("missed", [])

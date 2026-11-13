@@ -41,6 +41,7 @@ def run_checks(
     timeout: float = 10.0,
     stop_at_first: bool = False,
     run_timeout: float = 1800.0,
+    approved: list[str] | tuple = (),
 ) -> CheckRun:
     """Run the check files in a separate process and collect their results."""
     checks_dir = Path(checks_dir).resolve()
@@ -57,6 +58,7 @@ def run_checks(
                     "results": str(results),
                     "max_examples": max_examples,
                     "timeout": timeout,
+                    "approved": sorted(approved),
                 }
             )
         )

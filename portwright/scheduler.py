@@ -196,11 +196,32 @@ class Workspaces:
         self._merge_lock = threading.Lock()
 
     def _git(self, *args, cwd=None, check=True) -> subprocess.CompletedProcess:
+        """Run git as the harness, on the host.
+
+        Agents can write anything in their worktree, including its ``.git`` file. If
+        git discovered the repository from there, an agent could swap in a ``.git``
+        folder whose hooks, fsmonitor or config the harness would then run on the host.
+        So in a worktree, git is pointed at the worktree's own record inside the main
+        repository, which agents can't reach, and hooks and fsmonitor are off everywhere.
+        """
+        location = []
+        if cwd is not None and Path(cwd).resolve() != self.repo:
+            location = [f"--git-dir={self._admin_dir(cwd)}", f"--work-tree={Path(cwd).resolve()}"]
         return subprocess.run(
-            ["git", "-c", "user.name=portwright", "-c", "user.email=portwright@users.noreply.github.com",
+            ["git", *location, "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+             "-c", "user.name=portwright", "-c", "user.email=portwright@users.noreply.github.com",
              "-c", "commit.gpgsign=false", *args],
             cwd=cwd or self.repo, capture_output=True, text=True, check=check,
         )
+
+    def _admin_dir(self, worktree) -> Path:
+        """Find git's record of ``worktree`` in the main repository, without reading
+        anything inside the worktree itself."""
+        expected = Path(worktree).resolve() / ".git"
+        for record in sorted((self.repo / ".git" / "worktrees").glob("*/gitdir")):
+            if Path(record.read_text().strip()).resolve() == expected:
+                return record.parent
+        raise RuntimeError(f"{worktree} isn't a worktree of {self.repo}")
 
     def create(self, name: str, start: str | None = None) -> Path:
         """Make a worktree from the main branch, or from ``start`` to continue earlier work."""

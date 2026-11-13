@@ -32,6 +32,7 @@ def pytest_configure(config) -> None:
         session_module.Side(**options["reference"]),
         session_module.Side(**options["candidate"]),
         timeout=options.get("timeout", session_module.DEFAULT_TIMEOUT),
+        approved=options.get("approved", ()),
     )
     active.start()
     session_module.set_current(active)

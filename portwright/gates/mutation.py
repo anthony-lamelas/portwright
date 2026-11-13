@@ -59,6 +59,7 @@ def mutation_gate(
     max_examples: int = 100,
     target_dir=None,
     parallel: int = 3,
+    approved: list[str] | tuple = (),
 ) -> GateResult:
     """Fail if the checks notice too few of the sampled Rust mutants.
 
@@ -97,7 +98,7 @@ def mutation_gate(
                     continue
                 run = run_checks(
                     checks_dir, reference, {**reference, "path": str(site)},
-                    seed=seed, max_examples=max_examples, stop_at_first=True, timeout=5.0,
+                    seed=seed, max_examples=max_examples, stop_at_first=True, timeout=5.0, approved=approved,
                 )
             finally:
                 if not _apply(diff, mine, mutant["file"], reverse=True):
@@ -108,7 +109,8 @@ def mutation_gate(
                 "function": (mutant.get("function") or {}).get("function_name"),
                 "change": mutant.get("replacement", ""),
             }
-            if run.exit_status == PYTEST_EXIT_TESTS_FAILED and run.divergences:
+            # The unmutated port already shows approved differences, so they catch nothing.
+            if run.exit_status == PYTEST_EXIT_TESTS_FAILED and set(run.divergences) - set(approved):
                 results.append(("caught", label))
             elif run.exit_status == PYTEST_EXIT_OK:
                 results.append(("missed", label))
