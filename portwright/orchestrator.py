@@ -20,7 +20,7 @@ from portwright.gates.coverage import coverage_gate, rust_coverage
 from portwright.gates.differential import self_comparison_gate
 from portwright.gates.fuzz import fuzz_gate
 from portwright.gates.integrity import hash_tree
-from portwright.gates.license import is_permissive
+from portwright.gates.license import is_permissive, license_files
 from portwright.gates.mutation import mutation_gate
 from portwright.gates.rust_quality import count_rust_lines, count_rust_lines_file
 from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
@@ -33,7 +33,6 @@ from portwright.scheduler import (
 from portwright.state import JsonStore, RunPaths, append_capped, atomic_write
 
 PHASES = ["intake", "checks", "design", "port", "harden", "fix_review", "cleanup", "performance", "final_review", "report"]
-LICENSE_NAMES = ("LICENSE", "LICENSE.txt", "LICENSE.md", "LICENCE", "COPYING")
 
 
 class RunStopped(RuntimeError):
@@ -307,11 +306,18 @@ class Porter:
         config = self.config
         source = Path(config.source).resolve()
         commit = subprocess.run(["git", "rev-parse", "HEAD"], cwd=source, capture_output=True, text=True, check=False).stdout.strip() or "unknown"
-        license_text = next(
-            (path.read_text(encoding="utf-8") for name in LICENSE_NAMES if (path := source / name).exists()), None
-        )
-        if license_text is None or not is_permissive(license_text):
-            raise RunStopped("the library has no permissive license we recognize")
+        # Every license file must be permissive: a COPYING.LESSER beside a LICENSE means LGPL parts.
+        licenses = {path.name: path.read_text(encoding="utf-8", errors="replace") for path in license_files(source)}
+        if not licenses or not all(is_permissive(text) for text in licenses.values()):
+            found = ", ".join(licenses) or "no LICENSE, LICENCE, COPYING or UNLICENSE file"
+            raise RunStopped(f"the library has no permissive license we recognize ({found})")
+        if len(licenses) == 1:
+            license_text = next(iter(licenses.values()))
+        else:  # dual licensed, such as LICENSE-MIT and LICENSE-APACHE: keep both
+            license_text = "\n\n".join(f"===== {name} =====\n\n{text}" for name, text in licenses.items())
+        tests = source / config.tests_path
+        if tests.is_file() and not (tests.name.startswith("test_") and tests.suffix == ".py"):
+            raise RunStopped(f"--tests {config.tests_path} must be a folder or a test_*.py file, which pytest collects")
         upstream = self.paths.root / "upstream"
         for path in (self.paths.upstream_src, self.paths.tests_full, self.paths.tests_visible):
             if path.exists():
@@ -325,7 +331,11 @@ class Porter:
         else:
             shutil.copyfile(package, destination)
         (upstream / "LICENSE").write_text(license_text, encoding="utf-8")
-        shutil.copytree(source / config.tests_path, self.paths.tests_full)
+        if tests.is_file():  # a single test file, such as inflection's test_inflection.py at the root
+            self.paths.tests_full.mkdir(parents=True)
+            shutil.copyfile(tests, self.paths.tests_full / tests.name)
+        else:
+            shutil.copytree(tests, self.paths.tests_full)
         holdouts = strip_holdouts(self.paths.tests_full, self.paths.tests_visible, seed=config.seed, fraction=config.holdout_fraction)
         atomic_write(self.paths.control / "holdout_tests.json", json.dumps(holdouts, indent=1))
         api = extract_api(destination if package.is_dir() else self.paths.upstream_src)

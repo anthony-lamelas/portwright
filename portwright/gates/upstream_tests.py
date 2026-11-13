@@ -75,21 +75,39 @@ def private_test_names(tests_dir: str | Path) -> set[str]:
     return names
 
 
+def _top_level_names(folder: str | Path) -> set[str]:
+    """Names ``import`` could find directly in ``folder``: modules, packages, extensions."""
+    names = set()
+    for path in Path(folder).iterdir():
+        if path.name.startswith("__"):  # __pycache__, __init__.py
+            continue
+        if path.is_dir() and path.name.isidentifier():
+            names.add(path.name)
+        elif path.suffix in (".py", ".so", ".pyd"):
+            names.add(path.name.split(".")[0])
+    return names
+
+
 def run_tests(tests_dir: str | Path, side: dict, *, timeout: float = 900.0) -> dict[str, str]:
     """Run tests against one version and return ``{test id: passed|failed}``."""
     with isolation.scratch("porter-upstream-") as scratch:
         scratch = Path(scratch)
-        shutil.copytree(tests_dir, scratch / "tests", dirs_exist_ok=True)
+        tests = scratch / "tests"
+        shutil.copytree(tests_dir, tests, dirs_exist_ok=True)
         report = scratch / "report.xml"
         library = str(Path(side["path"]).resolve())
+        # Helpers beside the tests ("from common import ...") import as they would upstream.
+        # The library comes first, and a tests folder reusing one of its names stays off the
+        # path, since a namespace package would lose to a module of the same name.
+        path = [library] if _top_level_names(tests) & _top_level_names(library) else [library, str(tests)]
         if isolation.enabled():
-            env = {"PYTHONPATH": library}
+            env = {}
         else:
             env = {
                 key: value for key, value in os.environ.items()
                 if not key.startswith(("PORTER_", "PYTEST_"))
             }
-            env["PYTHONPATH"] = library
+        env["PYTHONPATH"] = os.pathsep.join(path)
         done = isolation.run(
             [
                 isolation.python(side.get("python", sys.executable)), "-m", "pytest", "tests",

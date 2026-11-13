@@ -2,17 +2,41 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from portwright.gates import GateResult
 from portwright.toolchain import host_target_dir, in_sandbox, run_in_toolchain
 
 ALLOWED = ["MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception","BSD-2-Clause", "BSD-3-Clause", "ISC", "Zlib", "Unicode-3.0", "MIT-0", "BSL-1.0", "Unlicense", "CC0-1.0"]
+# Wording of the licenses cargo-deny allows above. Several reuse MIT's grant sentence
+# (MIT-0, BSL-1.0, Unicode-3.0), and ISC's grant also covers 0BSD.
 PERMISSIVE_MARKERS = (
-    "Permission is hereby granted, free of charge",  # MIT
+    "Permission is hereby granted, free of charge",  # MIT, MIT-0, BSL-1.0, Unicode-3.0
     "Redistribution and use in source and binary forms",  # BSD
     "Apache License",
+    "with or without fee is hereby granted",  # ISC, old and new wording
+    "free and unencumbered software released into the public domain",  # Unlicense
+    "Permission is granted to anyone to use this software for any purpose",  # Zlib
+    "CC0 1.0 Universal",
 )
+# Copyleft wording refuses a license even beside permissive wording, as in "MIT or GPL"
+# or a LICENSE that bundles LGPL parts: a person decides those, not a string match.
+COPYLEFT_MARKERS = (
+    "GENERAL PUBLIC LICENSE",  # GPL, LGPL, AGPL ("GNU Lesser General Public License" too)
+    "GNU LIBRARY GENERAL PUBLIC",
+    "Mozilla Public License",
+    "Eclipse Public License",
+    "EUROPEAN UNION PUBLIC LICENCE",
+    "COMMON DEVELOPMENT AND DISTRIBUTION LICENSE",
+    "Open Software License",
+    "Creative Commons Attribution-ShareAlike",
+    "copyleft",
+)
+# Top-level files that hold a license: LICENSE, LICENCE, COPYING or UNLICENSE, in any
+# case, with an optional suffix such as .txt, .rst, -MIT or .LESSER.
+LICENSE_FILE = re.compile(r"(?:LICEN[CS]E|COPYING|UNLICENSE)(?:[-_.][\w.-]+)?", re.IGNORECASE)
+
 DENY_TEMPLATE = """[licenses]
 allow = {allow}
 confidence-threshold = 0.8
@@ -22,7 +46,21 @@ all-features = false
 
 
 def is_permissive(license_text: str) -> bool:
-    return any(marker in license_text for marker in PERMISSIVE_MARKERS)
+    text = " ".join(license_text.split()).casefold()  # wording wraps differently file to file
+    if any(marker.casefold() in text for marker in COPYLEFT_MARKERS):
+        return False
+    return any(marker.casefold() in text for marker in PERMISSIVE_MARKERS)
+
+
+def license_files(source) -> list[Path]:
+    """The license files at the top of a source tree, in name order."""
+    return sorted(
+        (
+            path for path in Path(source).iterdir()
+            if path.is_file() and LICENSE_FILE.fullmatch(path.name) and path.suffix != ".py"
+        ),
+        key=lambda path: path.name.casefold(),
+    )
 
 
 def write_attribution(workspace, upstream_license_text: str, name: str, url: str, commit: str) -> None:
