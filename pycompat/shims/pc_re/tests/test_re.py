@@ -147,3 +147,42 @@ def test_non_str_arguments_are_rejected():
         with pytest.raises(TypeError) as caught:
             pc.search(*args)
         assert str(caught.value) == message
+
+
+PATTERN_FUNCTIONS = [
+    (pc.pattern_search, ("a",)), (pc.pattern_match, ("a",)), (pc.pattern_fullmatch, ("a",)),
+    (pc.pattern_findall, ("a",)), (pc.pattern_finditer, ("a",)), (pc.pattern_sub, ("x", "a")),
+    (pc.pattern_subn, ("x", "a")), (pc.pattern_split, ("a",)), (pc.pattern_text, ()), (pc.pattern_flags, ()),
+    (pc.pattern_groups, ()), (pc.pattern_groupindex, ()),
+]
+MATCH_FUNCTIONS = [
+    (pc.match_group, ()), (pc.match_groups, ()), (pc.match_groupdict, ()), (pc.match_start, ()), (pc.match_end, ()),
+    (pc.match_span, ()), (pc.match_expand, ("x",)), (pc.match_lastindex, ()), (pc.match_lastgroup, ()),
+    (pc.match_pos, ()), (pc.match_endpos, ()), (pc.match_string, ()),
+]
+
+
+def test_pattern_and_match_arguments_are_type_checked():
+    """Review: a str ``p`` ran ``str.split`` and a Match ``p`` gave a bound method. Messages come from the shim."""
+    pattern, match = pc.compile("(a)"), pc.search("(a)", "a")
+    for func, rest in PATTERN_FUNCTIONS:
+        func(pattern, *rest)
+        for bad in ["a", match, None, 1, ["a"], re.I]:
+            with pytest.raises(TypeError) as caught:
+                func(bad, *rest)
+            assert str(caught.value) == f"p must be a compiled pattern, not {type(bad).__name__}", (func.__name__, bad)
+    for func, rest in MATCH_FUNCTIONS:
+        func(match, *rest)
+        for bad in [pattern, "a", None, (0, 1), 0]:
+            with pytest.raises(TypeError) as caught:
+                func(bad, *rest)
+            assert str(caught.value) == f"m must be a match object, not {type(bad).__name__}", (func.__name__, bad)
+    with pytest.raises(TypeError, match="^p must be a compiled pattern, not str$"):
+        pc.pattern_split("a,b,,c", ",", 2)
+    with pytest.raises(TypeError, match="^p must be a compiled pattern, not Match$"):
+        pc.pattern_groups(match)
+    # The pattern is checked before the string, as ``p.split`` is looked up before its arguments are evaluated.
+    with pytest.raises(TypeError, match="^p must be a compiled pattern, not int$"):
+        pc.pattern_split(1, b"a")
+    with pytest.raises(TypeError, match="^string must be str, not bytes$"):
+        pc.pattern_split(pattern, b"a")

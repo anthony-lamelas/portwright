@@ -9,6 +9,8 @@ Arguments must be core built-in values: None, bool, int, float, str, bytes, byte
 and lists, tuples, sets, frozensets and dicts of them (plus re flags, and compiled
 patterns and matches from this package). Anything else, such as a
 Decimal, raises TypeError, because its behavior comes from its own module.
+The ``p`` of ``pattern_*`` functions must be a compiled pattern and the ``m`` of
+``match_*`` functions a match object; anything else raises TypeError.
 """
 
 import re as _re
@@ -66,7 +68,24 @@ def _text(value, what):
     return value
 
 
+def _pattern(value):
+    """``value`` if it's a compiled pattern. Anything else would reach its own methods or
+    attributes: a str ``p`` would run ``str.split``, and a Match ``p`` would hand back a
+    bound method."""
+    if type(value) is not _re.Pattern:
+        raise TypeError(f"p must be a compiled pattern, not {type(value).__name__}")
+    return value
+
+
+def _match(value):
+    """``value`` if it's a match object, for the same reason as ``_pattern``."""
+    if type(value) is not _re.Match:
+        raise TypeError(f"m must be a match object, not {type(value).__name__}")
+    return value
+
+
 def _window(p, method, string, pos, endpos):
+    _pattern(p)
     _text(string, "string")
     return getattr(p, method)(string, pos) if endpos is None else getattr(p, method)(string, pos, endpos)
 
@@ -137,50 +156,50 @@ def pattern_finditer(p, string, pos=0, endpos=None): return list(_window(p, "fin
 
 @_builtins_only
 def pattern_sub(p, repl, string, count=0):
-    return p.sub(_text(repl, "repl"), _text(string, "string"), count)
+    return _pattern(p).sub(_text(repl, "repl"), _text(string, "string"), count)
 
 
 @_builtins_only
 def pattern_subn(p, repl, string, count=0):
-    return p.subn(_text(repl, "repl"), _text(string, "string"), count)
+    return _pattern(p).subn(_text(repl, "repl"), _text(string, "string"), count)
 
 
 @_builtins_only
 def pattern_split(p, string, maxsplit=0):
-    return p.split(_text(string, "string"), maxsplit)
+    return _pattern(p).split(_text(string, "string"), maxsplit)
 
 
 @_builtins_only
-def pattern_text(p): return p.pattern
+def pattern_text(p): return _pattern(p).pattern
 @_builtins_only
-def pattern_flags(p): return p.flags
+def pattern_flags(p): return _pattern(p).flags
 @_builtins_only
-def pattern_groups(p): return p.groups
+def pattern_groups(p): return _pattern(p).groups
 @_builtins_only
-def pattern_groupindex(p): return dict(p.groupindex)
+def pattern_groupindex(p): return dict(_pattern(p).groupindex)
 
 
 @_builtins_only
-def match_group(m, *groups): return m.group(*groups)
+def match_group(m, *groups): return _match(m).group(*groups)
 @_builtins_only
-def match_groups(m, default=None): return m.groups(default)
+def match_groups(m, default=None): return _match(m).groups(default)
 @_builtins_only
-def match_groupdict(m, default=None): return m.groupdict(default)
+def match_groupdict(m, default=None): return _match(m).groupdict(default)
 @_builtins_only
-def match_start(m, group=0): return m.start(group)
+def match_start(m, group=0): return _match(m).start(group)
 @_builtins_only
-def match_end(m, group=0): return m.end(group)
+def match_end(m, group=0): return _match(m).end(group)
 @_builtins_only
-def match_span(m, group=0): return m.span(group)
+def match_span(m, group=0): return _match(m).span(group)
 @_builtins_only
-def match_expand(m, template): return m.expand(_text(template, "template"))
+def match_expand(m, template): return _match(m).expand(_text(template, "template"))
 @_builtins_only
-def match_lastindex(m): return m.lastindex
+def match_lastindex(m): return _match(m).lastindex
 @_builtins_only
-def match_lastgroup(m): return m.lastgroup
+def match_lastgroup(m): return _match(m).lastgroup
 @_builtins_only
-def match_pos(m): return m.pos
+def match_pos(m): return _match(m).pos
 @_builtins_only
-def match_endpos(m): return m.endpos
+def match_endpos(m): return _match(m).endpos
 @_builtins_only
-def match_string(m): return m.string
+def match_string(m): return _match(m).string
