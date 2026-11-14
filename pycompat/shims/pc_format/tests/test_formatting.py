@@ -112,11 +112,19 @@ def test_str_format_errors():
             same(pc.str_format, lambda t, a, k: t.format(*a, **k), template, args, kwargs)
 
 
-@pytest.mark.parametrize("template", ["{0.real}", "{0.imag:5}", "{a.b}", "{0[0].real}", "{:{0.real}}", "{0} {1.x}"])
+@pytest.mark.parametrize("template", ["{0.real}", "{0.imag:5}", "{a.b}", "{0[0].real}", "{:{0.real}}", "{0} {1.x}",
+                                      # str.format reads the attribute before reaching the parse error (#61)
+                                      "{0.real}{", "{0.real}}", "{0:{1.real}}{", "{1.real}{0!z}", "{0.real.}"])
 def test_str_format_refuses_attribute_access(template):
     """Attribute lookups reach Python's object model, so the shim declares them out of scope."""
     with pytest.raises(TypeError, match="attribute access"):
         pc.str_format(template, ([1], 2), {"a": 1})
+
+
+@pytest.mark.parametrize("template", ["{0}{1.imag", "{0}{", "{0[0]}{", "{0}{1.real!", "{0:{1}{}"])
+def test_a_parse_error_before_any_attribute_is_still_python_s(template):
+    """Fields past the parse error are never evaluated, so they aren't refused either."""
+    same(pc.str_format, lambda t, a, k: t.format(*a, **k), template, ([1], 2), {})
 
 
 @pytest.mark.parametrize("template", ["%s", "%r", "%a", "%d", "%i", "%u", "%x", "%X", "%o", "%e", "%E", "%f", "%F",

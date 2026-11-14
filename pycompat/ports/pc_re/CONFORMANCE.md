@@ -67,6 +67,8 @@ None.
 - split outcome.stdout
 
 ## Differences agents proposed (not approved unless listed above)
+The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.
+
 - {"signature": "compile(pattern, flags) with flags & re.DEBUG (128): stdout", "reason": "CPython prints the parse dump and dis() to sys.stdout. The strict bindings can't import sys, call print or write to sys.stdout, and Rust writes to fd 1 aren't captured by redirect_stdout. The core produces the exact text (Pattern::compile_traced with a debug buffer, verified equal to CPython on ~7000 patterns), so enabling it is one call if a write-to-stdout path is ever allowed. Everything else (return value, errors, no caching of DEBUG patterns) matches."}
 - {"signature": "compile/search/... with flags & re.DEBUG (128): stdout output", "reason": "CPython prints the parse tree and code dump to sys.stdout, and the harness compares captured sys.stdout. Rust can't reach sys.stdout without calling into Python objects (sys import, getattr, or call), which the strict-bindings integrity gate forbids, and writing to fd 1 isn't captured. The core still builds the exact dump text (pattern::debug_dump), so allowing a single sys.stdout.write of core-produced text in the bindings would close this difference."}
 
@@ -116,6 +118,8 @@ Median nanoseconds per call on one machine. Below 1.00x means the port is slower
 | sub_template | 715 |
 
 ## Final design review (advisory, by a reviewer agent)
+*This review was written before a fix round that turned its behavior findings into checks. This run didn't record which findings those checks reproduced, so a finding below may be fixed or may still stand.*
+
 # Rust review: /work/port (pc-re-port-core + pc-re-port-py)
 
 This is a port of CPython 3.12 `re` for str patterns: parser, compiler, an iterative sre VM and templates in a core library, plus PyO3 bindings that only convert. I held the core to the library standard. **Verdict: good.** `cargo fmt --check` and default clippy are clean. Pedantic clippy reports about 80 doc-backtick and `must_use` nits. `cargo test` passes (27 tests). I built the module and diffed it against upstream on 40k random patterns × search/findall/split/subn/fullmatch (flags, lookarounds, conditionals, possessive and atomic groups, IGNORECASE with K/ß/İ) and ~25 edge cases (nesting 300–495, `x{4294967295}`, 2**70 pos and group, huge flags, DEBUG|I). There were **0 mismatches and no panics**. I found no gaming: no input-specific branches and no hard-coded answers. The items from the earlier review are fixed: the stdout FFI is gone, `State` buffers are reused, fields are `pub(crate)`, and `call.required(i)` exists. The one confirmed behavior difference is #1.

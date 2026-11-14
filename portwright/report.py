@@ -37,6 +37,43 @@ def _list_or_none(items: list[str]) -> str:
     return "\n".join(f"- {item}" for item in items) if items else "None."
 
 
+def _comparison_clean(state: dict) -> bool:
+    """True when the run finished and its final comparison found no unapproved differences."""
+    gate = state.get("gates", {}).get("main_differential")
+    return bool(gate and gate["passed"]) and not state.get("stopped")
+
+
+def _review_status(state: dict) -> str:
+    """Say which of the review's findings later rounds settled, since its text predates them.
+
+    After the final review, the test writer turns its behavior findings into checks,
+    and debuggers fix the Rust until the port passes them. Only the differences those
+    checks reproduced are known to be fixed: a finding the checks couldn't reach still
+    stands even though every check passes (#60).
+    """
+    checks = state.get("gates", {}).get("self_comparison_after_final_review")
+    if not checks:
+        return ""
+    if not checks["passed"]:
+        return ("*The test writer's checks for this review's findings were rejected, so the findings below "
+                "were not checked or fixed.*\n\n")
+    followup = state.get("review_followups", {}).get("final_review")
+    if followup is None:
+        return ("*This review was written before a fix round that turned its behavior findings into checks. "
+                "This run didn't record which findings those checks reproduced, so a finding below may be "
+                "fixed or may still stand.*\n\n")
+    reproduced = followup["reproduced"]
+    if not reproduced:
+        return ("*This review's behavior findings were turned into checks, and the port already passed them. "
+                "The checks reproduced none of the findings below, so any that are real still stand.*\n\n")
+    listed = ", ".join(f"`{item}`" for item in reproduced[:12]) + (f" and {len(reproduced) - 12} more" if len(reproduced) > 12 else "")
+    if followup["fixed"] and _comparison_clean(state):
+        return (f"*This review was written before its fix round. New checks reproduced these differences, and the "
+                f"fix round fixed all of them: {listed}. A finding below that none of these covers wasn't "
+                "reproduced and may still stand.*\n\n")
+    return f"*New checks reproduced these differences from this review, and they weren't all fixed: {listed}.*\n\n"
+
+
 def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native: dict) -> str:
     result, reasons = verdict(state)
     gates = state.get("gates", {})
@@ -86,7 +123,12 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
             entries.append(json.dumps(json.loads(item.read_text())))
         except ValueError:
             entries.append(f"{item.name}: unreadable")
-    parts.append("## Differences agents proposed (not approved unless listed above)\n" + _list_or_none(entries))
+    proposal_note = ""
+    if entries and _comparison_clean(state):
+        proposal_note = ("The final comparison finds no differences outside the approved list. So each proposal below "
+                         "was fixed later, is covered by an approved difference or a ruling, or concerns inputs the "
+                         "comparison doesn't judge, such as calls where the original times out.\n\n")
+    parts.append("## Differences agents proposed (not approved unless listed above)\n" + proposal_note + _list_or_none(entries))
     bugs = paths.public / "upstream_bugs.md"
     parts.append("## Likely bugs in the original\nThe port reproduces these on purpose.\n\n" + (bugs.read_text(encoding="utf-8") if bugs.exists() else "None reported."))
 
@@ -103,7 +145,7 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
 
     review = paths.public / "review.md"
     if review.exists():
-        parts.append("## Final design review (advisory, by a reviewer agent)\n" + review.read_text(encoding="utf-8"))
+        parts.append("## Final design review (advisory, by a reviewer agent)\n" + _review_status(state) + review.read_text(encoding="utf-8"))
 
     rejected = state.get("rejected", [])
     if rejected:

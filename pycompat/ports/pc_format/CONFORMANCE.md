@@ -61,6 +61,8 @@ None.
 None.
 
 ## Differences agents proposed (not approved unless listed above)
+The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.
+
 - {"signature": "round_number(int, ndigits) with -ndigits >~ 1.5e7", "reason": "CPython computes 10**-ndigits and passes 10s (differential outcome 'timeout'); the fuzz gate's -timeout=10 flags the same behavior in the port as a crash. No implementation satisfies both. Currently the port matches CPython (slow); the fast alternative (0 / MemoryError) is in /work/out/round_int_fast_alternative.rs.txt."}
 - {"signature": "round_number(int n, ndigits) with -ndigits > n.bit_length()+1 (huge)", "reason": "Per person decision: port returns 0 immediately; CPython builds 10**-ndigits and hangs/MemoryErrors. Not compared by the differential (CPython times out)."}
 

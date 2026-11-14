@@ -58,6 +58,8 @@ None.
 None.
 
 ## Differences agents proposed (not approved unless listed above)
+The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.
+
 - {"signature": "timezone_name(None)", "reason": "CPython raises AttributeError (None.tzname); frozen PyError has no AttributeError variant, so the port raises NotImplementedError with the identical message until requests/attribute_error.json is applied."}
 - {"signature": "datetime_fromtimestamp(ts, off) where glibc gmtime_r overflows (e.g. ts=-2**63, 2**63-1, 10**18)", "reason": "Raises OverflowError('[Errno 75] Value too large for defined data type') instead of OSError, because PyError has no OSError variant (requests/os_error.json). Fixed by a one-line change in timestamp.rs gmtime_overflow() once the variant exists."}
 
@@ -105,6 +107,8 @@ Median nanoseconds per call on one machine. Below 1.00x means the port is slower
 | timedelta_float | 173 |
 
 ## Final design review (advisory, by a reviewer agent)
+*This review was written before a fix round that turned its behavior findings into checks. This run didn't record which findings those checks reproduced, so a finding below may be fixed or may still stand.*
+
 # Rust review: /work/port (pc-datetime-port-core + pc-datetime-port-py)
 
 **Scope:** a library. It has a core crate of `fn(&[Value], &Kwargs) -> PyResult<Value>` shims and a thin PyO3 layer. Edition 2021, no `[lints]` table.

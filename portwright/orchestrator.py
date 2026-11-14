@@ -1000,7 +1000,23 @@ class Porter:
         )
         if not self_check.passed:
             return  # the old checks are back; nothing new for debuggers to fix
-        self._fix_until(stage, self._verify_main, "New checks reproduce problems a reviewer found. Fix the Rust so the port matches the original.")
+        # Record what the new checks actually reproduced, so the report can say which
+        # findings were fixed. A check that passes says nothing about a finding it
+        # couldn't reach, so passing checks alone don't mean the review is settled (#60).
+        first = self._verify_main()
+        reproduced = sorted(
+            {signature for gate in first.gates if not gate.passed for signature in gate.details.get("divergences", {})}
+            | {f"{gate.name}: {test}" for gate in first.gates if not gate.passed for test in gate.details.get("failed", [])}
+        )
+
+        def note(fixed: bool) -> None:
+            self.run_state.update(lambda d: d.setdefault("review_followups", {}).__setitem__(
+                stage, {"reproduced": reproduced, "fixed": fixed}))
+        note(False)
+        pending = [first]
+        self._fix_until(stage, lambda: pending.pop() if pending else self._verify_main(),
+                        "New checks reproduce problems a reviewer found. Fix the Rust so the port matches the original.")
+        note(True)
 
     def _phase_cleanup(self) -> None:
         self._unfreeze_shared_code()

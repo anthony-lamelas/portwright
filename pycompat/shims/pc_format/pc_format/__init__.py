@@ -71,14 +71,16 @@ def _refuse_attribute_fields(template, depth=0):
 
     Attribute lookups reach Python's object model (``{0.__class__.__doc__}`` is int's
     docstring), which a port over plain values can't reproduce. Fields are scanned in
-    order, including fields nested in format specs. A template Python can't parse is
-    left for ``str.format`` to reject.
+    order, including fields nested in format specs. ``str.format`` evaluates each field
+    before it reaches a parse error later in the template, so ``'{0.real}{'`` still
+    reads ``.real``. The scan therefore stops at the parse error, not before it.
     """
-    try:
-        fields = list(_string.formatter_parser(template))
-    except ValueError:
-        return
-    for _literal, field, spec, _conversion in fields:
+    fields = _string.formatter_parser(template)
+    while True:
+        try:
+            _literal, field, spec, _conversion = next(fields)
+        except (StopIteration, ValueError):
+            return  # str.format raises the parse error itself
         if field is not None:
             try:
                 for is_attribute, _name in _string.formatter_field_name_split(field)[1]:
