@@ -108,6 +108,10 @@ def run_tests(tests_dir: str | Path, side: dict, *, timeout: float = 900.0) -> d
                 if not key.startswith(("PORTER_", "PYTEST_"))
             }
         env["PYTHONPATH"] = os.pathsep.join(path)
+        # Test IDs must name the same case in every run. pytest numbers cases built from a
+        # set (isodate's TEST_CASES = {...}) in iteration order, which follows the per-process
+        # string hash, so two runs of the same tests disagreed on IDs (#63).
+        env["PYTHONHASHSEED"] = "0"
         done = isolation.run(
             [
                 isolation.python(side.get("python", sys.executable)), "-m", "pytest", "tests",

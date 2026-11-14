@@ -169,3 +169,21 @@ def test_licenses_cargo_deny_allows_are_recognised(name):
 @pytest.mark.parametrize("name", COPYLEFT)
 def test_copyleft_licenses_are_still_refused(name):
     assert not is_permissive(COPYLEFT[name])
+
+
+def test_cases_built_from_a_set_keep_their_ids_across_runs(tmp_path):
+    """#63: isodate's TEST_CASES = {...} gave each run different IDs, so the baseline
+    (two runs of the original) reported 50 of its own tests as failing."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    cases = ", ".join(f"({n}, 'case{n}')" for n in range(30))
+    (tests / "test_up.py").write_text(
+        "import pytest, toy\n"
+        f"CASES = {{{cases}}}\n"
+        "@pytest.mark.parametrize('n, text', CASES)\n"
+        "def test_value(n, text):\n    assert text == f'case{toy.f(n)}'\n"
+    )
+    ref = library(tmp_path / "ref")
+    runs = [run_tests(tests, ref) for _ in range(3)]
+    assert runs[0] == runs[1] == runs[2]
+    assert len(runs[0]) == 30 and set(runs[0].values()) == {"passed"}
