@@ -27,6 +27,16 @@ class LimitReached(RuntimeError):
     """A usage limit was hit. Progress is saved, and the run can resume later."""
 
 
+def encodable(text: str) -> str:
+    """Escape lone surrogates so the prompt can be sent as UTF-8.
+
+    Difference examples quote Python strings, which may hold lone surrogates
+    ('\\udc80'). Sending one crashed the orchestrator. The escape keeps the
+    information: the agent sees '\\udc80'.
+    """
+    return text.encode("utf-8", "backslashreplace").decode("utf-8")
+
+
 @dataclass
 class AgentSession:
     """One agent run. ``mounts`` maps a host path to ``container_path[:ro]``."""
@@ -210,7 +220,7 @@ class DockerClaude:
         name = f"porter-{session.role}-{uuid.uuid4().hex[:8]}"
         try:
             done = subprocess.run(
-                self.command(session, home, env, name), input=session.prompt,
+                self.command(session, home, env, name), input=encodable(session.prompt),
                 capture_output=True, text=True, timeout=session.timeout, check=False,
             )
         except subprocess.TimeoutExpired:
