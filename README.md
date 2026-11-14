@@ -127,7 +127,7 @@ There is no Python source to port for a built-in, so each one gets a **shim**: a
 | `pc_format` | `format()`, `str.format`, `%`, float `repr`, `int`/`float` parsing, `round`, `//`, `%`, `divmod`, `/` | matched on what was tested ([report](pycompat/ports/pc_format/CONFORMANCE.md)) |
 | `pc_unicode` | case mapping, `is*` predicates, split/strip/pad, `unicodedata` (Unicode 15.0) | matched on what was tested ([report](pycompat/ports/pc_unicode/CONFORMANCE.md)) |
 | `pc_re` | `re` for str patterns, starting from the regex engine written for `parse` | matched on what was tested ([report](pycompat/ports/pc_re/CONFORMANCE.md)) |
-| `pc_datetime` | dates, times, timedeltas, ISO 8601, `strftime`, `strptime` | running |
+| `pc_datetime` | dates, times, timedeltas, ISO 8601, `strftime`, `strptime` | matched on what was tested ([report](pycompat/ports/pc_datetime/CONFORMANCE.md)) |
 
 **`pc_format`** matched CPython on 22,574 compared calls. All 222 shim tests pass, including the 5 held back from agents, and the checks caught 38 of 42 planted bugs. Through Python, it is 1.3x to 5.8x faster than the built-ins. It took three runs and about $73 of API-equivalent usage. Before trusting it, read these:
 
@@ -139,6 +139,8 @@ There is no Python source to port for a built-in, so each one gets a **shim**: a
 **`pc_unicode`** matched CPython on 62,093 compared calls and passed all 54 shim tests, including the 6 held back. The checks caught 36 of 38 planted bugs. It took one run and about $21. Through Python it ranges from 0.81x (`split`, which is slower) to 3.1x faster. The final reviewer found one difference: a keyword argument whose name contains a lone surrogate comes out garbled in the port's error message. Its Unicode tables were generated from CPython's own `unicodedata`.
 
 **`pc_re`** matched CPython's `re` on 68,641 compared calls and passed all 195 shim tests. The checks caught all 39 planted bugs. It took one run and about $49, starting from the regex engine written for `parse`. Through Python it is 1.3x to 7.7x faster. `re.DEBUG` output is an approved difference. The core produces CPython's exact debug dump, but strict bindings can't write to Python's `sys.stdout`. The final reviewer reported that the port stops at 900 levels of nesting, where CPython allows about 996 when called from a script. The harness's comparison runs at a different Python stack depth and couldn't reproduce it.
+
+**`pc_datetime`** matched CPython on 17,485 compared calls and passed all 30 shim tests. The checks caught 37 of 41 planted bugs, and fuzzing found no crashes in 34 targets. It took about $36 over two runs, interrupted when the machine was off. Through Python it is 1.8x to 5.1x faster. It reproduces glibc's `strftime` extensions (`%-d`, `%_H` and others) and several quirks of CPython's parsers, which the report lists. The "Must fix" findings and two proposed differences in its report predate the final fix round, which fixed them: keyword names with lone surrogates, `timezone_name(None)` and the `fromtimestamp` `OSError`.
 
 Building `pc_format` exposed thirteen harness bugs, issues 18 to 30 in the log. The worst, #29, was that the comparison worker crashed on ints over 4,300 digits on both sides, so those calls passed without being compared. The `parse` run recorded no crashed calls, so its results aren't affected.
 

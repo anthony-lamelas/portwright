@@ -1,0 +1,3 @@
+This is an experimental, unofficial Rust port of pc_datetime (https://github.com/anthony-lamelas/portwright/tree/main/pycompat/shims/pc_datetime), at commit 721dca3d1fee2b96bd67e7c139d78f2d86387190.
+It isn't affiliated with or endorsed by the original authors.
+The original's license is in LICENSE.upstream.
