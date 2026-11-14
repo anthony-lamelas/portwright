@@ -163,7 +163,7 @@ fn first_chunks(values: Bound<'_, PyList>, n: BigInt) -> FirstChunks {
     }
 }
 
-#[pyclass(name = "Stack")]
+#[pyclass(module = "textkit", name = "Stack")]
 struct PyStack {
     inner: core_lib::Stack<Py<PyAny>>,
 }
