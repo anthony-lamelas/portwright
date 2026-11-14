@@ -1,0 +1,10 @@
+[
+ {"name": "iso_parse_datetime", "target": "datetime_fromisoformat", "args": ["2024-02-29T13:05:09.123456+05:30"], "kwargs": {}},
+ {"name": "iso_format_datetime", "target": "datetime_isoformat", "args": [[2024, 2, 29, 13, 5, 9, 123456, 19800, 0]], "kwargs": {"timespec": "milliseconds"}},
+ {"name": "strptime_full", "target": "strptime", "args": ["Thu Feb 29 13:05:09 2024 +0530", "%a %b %d %H:%M:%S %Y %z"], "kwargs": {}},
+ {"name": "strftime_mixed", "target": "strftime", "args": [[2024, 2, 29, 13, 5, 9, 123456, -18000, 0], "%Y-%m-%dT%H:%M:%S.%f%z %A %j %U %G-W%V-%u"], "kwargs": {}},
+ {"name": "datetime_add", "target": "datetime_add", "args": [[2024, 2, 29, 13, 5, 9, 123456, 3600, 0], [400, 7261, 999999]], "kwargs": {}},
+ {"name": "timedelta_float", "target": "make_timedelta", "args": [1.5, 86399.9999995, 0.25, 2.5, 1.75, 0.5, 3.25], "kwargs": {}},
+ {"name": "fromtimestamp", "target": "datetime_fromtimestamp", "args": [1709211909.123456, -34200], "kwargs": {}},
+ {"name": "isocalendar", "target": "isocalendar", "args": [[2021, 1, 3]], "kwargs": {}}
+]

@@ -143,3 +143,12 @@ def test_login_failures_are_recognized(text):
     from portwright.agents import _AUTH_TEXT
 
     assert _AUTH_TEXT.search(text)
+
+
+def test_prompts_with_lone_surrogates_can_be_sent():
+    """A difference example quoting '\udc80' crashed the orchestrator."""
+    from portwright.agents import encodable
+
+    text = encodable("reference: 'x\udc80y' differs")
+    text.encode("utf-8")
+    assert "\\udc80" in text

@@ -1,0 +1,262 @@
+[package]
+name = "pc-datetime-port-core-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[lib]
+name = "pc_datetime_fuzz"
+path = "src/lib.rs"
+
+[dependencies]
+libfuzzer-sys = "0.4"
+num-bigint = "0.4"
+pc-datetime-port-core = { path = "../crates/pc-datetime-port-core" }
+
+# Keep this crate out of the port's workspace.
+[workspace]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "make_date"
+path = "fuzz_targets/make_date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "make_time"
+path = "fuzz_targets/make_time.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "make_datetime"
+path = "fuzz_targets/make_datetime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "make_timedelta"
+path = "fuzz_targets/make_timedelta.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timedelta_str"
+path = "fuzz_targets/timedelta_str.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timedelta_repr"
+path = "fuzz_targets/timedelta_repr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timedelta_total_seconds"
+path = "fuzz_targets/timedelta_total_seconds.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timedelta_multiply"
+path = "fuzz_targets/timedelta_multiply.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timedelta_divide"
+path = "fuzz_targets/timedelta_divide.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timedelta_floor_divide"
+path = "fuzz_targets/timedelta_floor_divide.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_toordinal"
+path = "fuzz_targets/date_toordinal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_fromordinal"
+path = "fuzz_targets/date_fromordinal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "weekday"
+path = "fuzz_targets/weekday.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isoweekday"
+path = "fuzz_targets/isoweekday.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "isocalendar"
+path = "fuzz_targets/isocalendar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_fromisocalendar"
+path = "fuzz_targets/date_fromisocalendar.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_add"
+path = "fuzz_targets/date_add.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_add"
+path = "fuzz_targets/datetime_add.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_subtract"
+path = "fuzz_targets/datetime_subtract.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_compare"
+path = "fuzz_targets/datetime_compare.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_isoformat"
+path = "fuzz_targets/date_isoformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "time_isoformat"
+path = "fuzz_targets/time_isoformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_isoformat"
+path = "fuzz_targets/datetime_isoformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "date_fromisoformat"
+path = "fuzz_targets/date_fromisoformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "time_fromisoformat"
+path = "fuzz_targets/time_fromisoformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_fromisoformat"
+path = "fuzz_targets/datetime_fromisoformat.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strftime"
+path = "fuzz_targets/strftime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strptime"
+path = "fuzz_targets/strptime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_str"
+path = "fuzz_targets/datetime_str.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_repr"
+path = "fuzz_targets/datetime_repr.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "timezone_name"
+path = "fuzz_targets/timezone_name.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_timestamp"
+path = "fuzz_targets/datetime_timestamp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_fromtimestamp"
+path = "fuzz_targets/datetime_fromtimestamp.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "datetime_astimezone"
+path = "fuzz_targets/datetime_astimezone.rs"
+test = false
+doc = false
+bench = false

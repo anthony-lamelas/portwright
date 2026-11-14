@@ -1,0 +1,16 @@
+[package]
+name = "pc-datetime-port-py"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Python bindings for the experimental, unofficial Rust port of pc_datetime."
+
+[lib]
+name = "pc_datetime"
+crate-type = ["cdylib"]
+
+[dependencies]
+pc-datetime-port-core = { path = "../pc-datetime-port-core" }
+pyo3 = { version = "0.29", features = ["extension-module", "num-bigint"] }
+num-bigint = "0.4"
