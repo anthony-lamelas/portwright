@@ -170,6 +170,7 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
 def write_report(paths, config, state: dict, tasks: dict, speed: dict, native: dict) -> Path:
     text = build_markdown(paths, config, state, tasks, speed, native)
     result, reasons = verdict(state)
+    paths.port.mkdir(parents=True, exist_ok=True)  # a run stopped at intake has no port yet (#62)
     (paths.port / "CONFORMANCE.md").write_text(text, encoding="utf-8")
     atomic_write(
         paths.control / "report.json",

@@ -67,3 +67,15 @@ def test_proposals_are_not_called_fixed(tmp_path):
 def test_runs_without_a_final_review_fix_round_are_unchanged(tmp_path):
     text = report(tmp_path, {"main_differential": gate(True)})
     assert "## Must fix" in text and "fix round" not in text
+
+
+def test_a_run_stopped_before_porting_still_gets_a_report(tmp_path):
+    """#62: the report phase crashed when intake stopped the run before port/ existed."""
+    from portwright.report import write_report
+    from portwright.state import RunPaths
+
+    paths = RunPaths(tmp_path / "run")
+    paths.control.mkdir(parents=True)
+    config = SimpleNamespace(lib="toy", url="https://example.invalid")
+    written = write_report(paths, config, {"gates": {}, "stopped": "the original's own tests don't pass here"}, {}, {}, {})
+    assert "stopped early" in written.read_text()
