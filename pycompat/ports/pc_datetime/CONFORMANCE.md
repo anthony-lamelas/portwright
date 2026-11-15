@@ -57,6 +57,11 @@ None.
 ## Approved differences
 None.
 
+## Rulings by a person
+Agents had to follow these. Some accept differences that the list above doesn't show.
+
+- Granted: you may now change crates/pc-datetime-port-core/src/error.rs, crates/pc-datetime-port-py/src/convert.rs. Answer to the shared_change request 'PyError::AttributeError': add an AttributeError variant to PyError (with type_name and Display), map it to PyAttributeError in convert.rs, and use it for timezone_name(None), which raises AttributeError("'NoneType' object has no attribute 'tzname'") in the original.
+
 ## Differences agents proposed (not approved unless listed above)
 The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.
 

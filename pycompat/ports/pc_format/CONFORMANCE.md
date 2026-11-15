@@ -60,6 +60,11 @@ None.
 ## Approved differences
 None.
 
+## Rulings by a person
+Agents had to follow these. Some accept differences that the list above doesn't show.
+
+- round_number(n, ndigits) for an int n and very negative ndigits: when abs(n) < 10**k / 2 (k = -ndigits) the exact answer is 0, so return 0 at once without building 10**k. Don't raise MemoryError from a size estimate. The differential doesn't compare calls where CPython times out, so this isn't a difference there; it's reported as a known difference. Every case CPython answers in time must still match exactly.
+
 ## Differences agents proposed (not approved unless listed above)
 The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.
 
