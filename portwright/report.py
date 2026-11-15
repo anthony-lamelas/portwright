@@ -116,6 +116,12 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
 
     approved = state.get("approved_differences", [])
     parts.append("## Approved differences\n" + _list_or_none(approved))
+    # Rulings can accept a difference or unfreeze code without approving a signature, so
+    # a report that printed only approved signatures would hide them (#67).
+    rulings = paths.control / "human_decisions.md"
+    if rulings.exists() and rulings.read_text(encoding="utf-8").strip():
+        parts.append("## Rulings by a person\nAgents had to follow these. Some accept differences that the list above doesn't show.\n\n"
+                     + rulings.read_text(encoding="utf-8").strip())
     proposals = sorted((paths.control / "differences").glob("*.json")) if (paths.control / "differences").is_dir() else []
     entries = []
     for item in proposals:
