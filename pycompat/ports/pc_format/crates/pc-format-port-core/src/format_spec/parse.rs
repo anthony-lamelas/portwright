@@ -79,23 +79,10 @@ pub(crate) fn type_char_text(kind: u32) -> String {
     }
 }
 
-/// Parses `spec` for an object of type `type_name`.
+/// Parses the spec `s` for an object of type `type_name`.
 ///
 /// # Errors
 /// `ValueError` with CPython's message for every malformed spec.
-pub fn parse_spec(
-    spec: &PyStr,
-    type_name: &str,
-    default_type: u32,
-    default_align: u8,
-) -> PcResult<FormatSpec> {
-    parse_spec_code_points(spec.code_points(), type_name, default_type, default_align)
-}
-
-/// [`parse_spec`] for a spec given as code points.
-///
-/// # Errors
-/// As [`parse_spec`].
 pub fn parse_spec_code_points(
     s: &[u32],
     type_name: &str,

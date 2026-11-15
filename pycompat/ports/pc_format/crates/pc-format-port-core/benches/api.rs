@@ -1,4 +1,6 @@
-//! Core-only timings for the calls in `checks/benchmarks.json` (no Python boundary).
+//! Core-only timings for the calls in `checks/benchmarks.json` (no Python
+//! boundary). Arguments mirror that file exactly, so these numbers can be
+//! compared with the through-Python timings.
 #![allow(
     clippy::approx_constant,
     reason = "the float literals mirror benchmarks.json; they are not pi or e"
@@ -24,26 +26,26 @@ fn api(c: &mut Criterion) {
         b.iter(|| core::format_value(black_box(&hex.0), black_box(&hex.1)));
     });
 
-    let template = Value::str("{name:>10} | {0:08.3f} | {1!r:^12} | {2:,}");
+    let template = Value::str("{0:>10} | {1:.3e} | {name!r:^12} | {2[0]}");
     let args = Value::List(vec![
-        Value::Float(3.14159),
-        Value::str("abc"),
-        Value::int(1_234_567),
+        Value::int(42),
+        Value::Float(6.022_140_76e23),
+        Value::List(vec![Value::int(7), Value::int(8)]),
     ]);
-    let kwargs = Value::Dict(vec![(Value::str("name"), Value::str("total"))]);
+    let kwargs = Value::Dict(vec![(Value::str("name"), Value::str("widget"))]);
     c.bench_function("str_format_template", |b| {
         b.iter(|| core::str_format(black_box(&template), black_box(&args), black_box(&kwargs)));
     });
 
-    let row = Value::str("%-10s %5d %8.3f %x %r");
-    let values = Value::Tuple(vec![
-        Value::str("item"),
-        Value::int(42),
-        Value::Float(2.71828),
-        Value::int(255),
-        Value::str("q"),
+    let row = Value::str("%(label)-10s %(v)08.3f %(n)+d %(h)x %(q)r");
+    let values = Value::Dict(vec![
+        (Value::str("label"), Value::str("label")),
+        (Value::str("v"), Value::Float(3.14159)),
+        (Value::str("n"), Value::int(-17)),
+        (Value::str("h"), Value::int(255)),
+        (Value::str("q"), Value::str("q")),
     ]);
-    c.bench_function("percent_format_row", |b| {
+    c.bench_function("percent_mixed", |b| {
         b.iter(|| core::percent_format(black_box(&row), black_box(&values)));
     });
 
@@ -52,31 +54,29 @@ fn api(c: &mut Criterion) {
         b.iter(|| core::float_repr(black_box(&shortest)));
     });
 
-    let float_text = Value::str("  -1.2345678901234567e-123  ");
-    c.bench_function("parse_float_text", |b| {
-        b.iter(|| core::parse_float(black_box(&float_text)));
-    });
-
-    let int_text = Value::str("123456789012345678901234567890123456789012345678901234567890");
-    let base = Value::int(10);
-    c.bench_function("parse_int_big", |b| {
-        b.iter(|| core::parse_int(black_box(&int_text), black_box(&base)));
-    });
-
-    let big_int = big(
-        "123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890",
-    );
+    let big_int = big("123456789012345678901234567890123456789012345678901234567890");
     c.bench_function("int_str_big", |b| {
         b.iter(|| core::int_str(black_box(&big_int)));
     });
 
+    let float_text = Value::str("  -1.2345678901234567e-123 ");
+    c.bench_function("parse_float_text", |b| {
+        b.iter(|| core::parse_float(black_box(&float_text)));
+    });
+
+    let int_text = Value::str("0xdead_beef_cafe_babe");
+    let base = Value::int(0);
+    c.bench_function("parse_int_hex", |b| {
+        b.iter(|| core::parse_int(black_box(&int_text), black_box(&base)));
+    });
+
     let round = (Value::Float(2.675), Value::int(2));
-    c.bench_function("round_float_digits", |b| {
+    c.bench_function("round_half_even", |b| {
         b.iter(|| core::round_number(black_box(&round.0), black_box(&round.1)));
     });
 
-    let divmod = (Value::Float(-7.25), Value::Float(2.5));
-    c.bench_function("div_mod_floats", |b| {
+    let divmod = (Value::Float(-7.25), Value::Float(0.5));
+    c.bench_function("divmod_floats", |b| {
         b.iter(|| core::div_mod(black_box(&divmod.0), black_box(&divmod.1)));
     });
 }

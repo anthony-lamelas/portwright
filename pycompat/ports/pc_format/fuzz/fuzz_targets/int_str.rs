@@ -1,21 +1,17 @@
+//! Fuzzes `pc_format_port_core::int_str`: errors are expected, panics are bugs.
 #![no_main]
-//! Fuzzes `pc_format_port_core::int_str`. Python exceptions are expected; only
-//! panics, aborts, hangs and runaway allocations are failures.
 
-use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
-use pc_format_port_core as core_api;
-
-#[path = "../common/mod.rs"]
-mod common;
-
-fn go(u: &mut Unstructured) -> arbitrary::Result<()> {
-    let n = if u.ratio(1u8, 2)? { core_api::Value::Int(common::big_int(u)?) } else { common::value(u)? };
-    common::run(core_api::int_str(&n));
-    Ok(())
-}
+use pc_format_port_core as core;
+use pc_format_port_core::{Value};
+use pcf_fuzz::{Gen};
 
 fuzz_target!(|data: &[u8]| {
-    let mut u = Unstructured::new(data);
-    let _ = go(&mut u);
+    let mut g = Gen::new(data);
+    let n = match g.pick(8) {
+        0..=5 => Value::Int(g.bigint()),
+        6 => Value::Bool(g.flag()),
+        _ => g.value(2),
+    };
+    let _ = core::int_str(&n);
 });

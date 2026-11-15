@@ -7,15 +7,17 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+[lib]
+name = "pcf_fuzz"
+path = "src/lib.rs"
+
 [dependencies]
 libfuzzer-sys = "0.4"
 arbitrary = "1"
 num-bigint = "0.4"
+pc-format-port-core = { path = "../crates/pc-format-port-core" }
 
-[dependencies.pc-format-port-core]
-path = "../crates/pc-format-port-core"
-
-# Keep this crate out of any parent workspace.
+# Detach from any enclosing workspace.
 [workspace]
 members = ["."]
 

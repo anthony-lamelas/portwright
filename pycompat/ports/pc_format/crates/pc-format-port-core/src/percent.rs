@@ -4,12 +4,16 @@
 //! and `_PyBytes_FormatEx` (`Objects/bytesobject.c`). Both share one parser
 //! and one padding routine; [`Mode`] selects the handful of differences.
 
+use std::borrow::Cow;
+
 use num_bigint::BigInt;
 use num_traits::{FromPrimitive, ToPrimitive};
 
 use crate::arith::numeric_mod;
 use crate::format_spec::{check_size, memory_error, try_vec};
-use crate::format_spec::{int_magnitude_digits, try_double_to_string, wrap_e_precision, DtoaFlags};
+use crate::format_spec::{
+    int_magnitude_digits, try_double_to_string, u64_digits, wrap_e_precision, DtoaFlags,
+};
 use crate::numbers::int_to_float;
 use crate::repr::{ascii_repr, value_repr, value_str};
 use crate::value::{check_builtins, ExcKind, PcResult, PyError, PyStr, Value};
@@ -46,6 +50,7 @@ pub fn modulo_api(a: &Value, b: &Value) -> PcResult<Value> {
 fn binary_mod(a: &Value, b: &Value) -> PcResult<Value> {
     match a {
         Value::Str(s) => format(Mode::Text, s.code_points(), b)
+            .and_then(Units::into_wide)
             .map(|out| Value::Str(PyStr::from_code_points(out))),
         Value::Bytes(t) => format_bytes(t, b).map(Value::Bytes),
         Value::ByteArray(t) => format_bytes(t, b).map(Value::ByteArray),
@@ -62,16 +67,177 @@ fn binary_mod(a: &Value, b: &Value) -> PcResult<Value> {
 fn format_bytes(template: &[u8], args: &Value) -> PcResult<Vec<u8>> {
     let mut units: Vec<u32> = try_vec(template.len())?;
     units.extend(template.iter().map(|&b| u32::from(b)));
-    let out = format(Mode::Bytes, &units, args)?;
-    let mut bytes = try_vec(out.len())?;
-    // Every unit comes from a byte or from ASCII text, so this never truncates.
-    bytes.extend(out.into_iter().map(|u| u8::try_from(u).unwrap_or(b'?')));
-    Ok(bytes)
+    format(Mode::Bytes, &units, args)?.into_bytes()
 }
 
-/// Grows `out` by `extra` units, or fails with `MemoryError`.
-fn reserve(out: &mut Vec<u32>, extra: usize) -> PcResult<()> {
-    out.try_reserve(extra).map_err(|_| memory_error())
+/// Code points stored in the narrowest of CPython's str kinds (1, 2 or 4
+/// bytes each) that holds them, so huge paddings cost what they cost
+/// CPython (the worker runs under a 1 GiB address-space limit).
+#[derive(Debug)]
+enum Units {
+    Narrow(Vec<u8>),
+    Ucs2(Vec<u16>),
+    Wide(Vec<u32>),
+}
+
+/// Runs `$body` with `$v` bound to whichever vector `$units` holds.
+macro_rules! each {
+    ($units:expr, $v:ident => $body:expr) => {
+        match $units {
+            Units::Narrow($v) => $body,
+            Units::Ucs2($v) => $body,
+            Units::Wide($v) => $body,
+        }
+    };
+}
+
+/// `src` converted unit by unit to a fresh vector, or `MemoryError`.
+fn convert_units<S: Copy, D: TryFrom<S> + Default>(src: &[S]) -> PcResult<Vec<D>> {
+    let mut out = try_vec(src.len())?;
+    out.extend(src.iter().map(|&u| D::try_from(u).unwrap_or_default()));
+    Ok(out)
+}
+
+/// Appends `part` to `dst`; callers widen `dst` first, so nothing truncates.
+fn append<S: Copy, D: TryFrom<S> + Default>(dst: &mut Vec<D>, part: &[S]) -> PcResult<()> {
+    dst.try_reserve(part.len()).map_err(|_| memory_error())?;
+    dst.extend(part.iter().map(|&u| D::try_from(u).unwrap_or_default()));
+    Ok(())
+}
+
+impl Units {
+    fn len(&self) -> usize {
+        each!(self, v => v.len())
+    }
+
+    fn maxchar(&self) -> u32 {
+        match self {
+            Units::Narrow(v) => v.iter().copied().max().map_or(0, u32::from),
+            Units::Ucs2(v) => v.iter().copied().max().map_or(0, u32::from),
+            Units::Wide(v) => v.iter().copied().max().unwrap_or(0),
+        }
+    }
+
+    fn get(&self, i: usize) -> Option<u32> {
+        match self {
+            Units::Narrow(v) => v.get(i).copied().map(u32::from),
+            Units::Ucs2(v) => v.get(i).copied().map(u32::from),
+            Units::Wide(v) => v.get(i).copied(),
+        }
+    }
+
+    fn truncate(&mut self, n: usize) {
+        each!(self, v => v.truncate(n));
+    }
+
+    /// Grows the buffer by `extra` units, or fails with `MemoryError`.
+    fn reserve(&mut self, extra: usize) -> PcResult<()> {
+        each!(self, v => v.try_reserve(extra)).map_err(|_| memory_error())
+    }
+
+    /// Switches to a wider kind if `maxchar` doesn't fit the current one.
+    fn widen_for(&mut self, maxchar: u32) -> PcResult<()> {
+        let widened = match self {
+            Units::Narrow(v) if maxchar > 0xFFFF => Units::Wide(convert_units(v)?),
+            Units::Narrow(v) if maxchar > 0xFF => Units::Ucs2(convert_units(v)?),
+            Units::Ucs2(v) if maxchar > 0xFFFF => Units::Wide(convert_units(v)?),
+            _ => return Ok(()),
+        };
+        *self = widened;
+        Ok(())
+    }
+
+    fn push(&mut self, u: u32) -> PcResult<()> {
+        self.push_fill(u, 1)
+    }
+
+    fn push_fill(&mut self, u: u32, n: usize) -> PcResult<()> {
+        self.widen_for(u)?;
+        self.reserve(n)?;
+        match self {
+            Units::Narrow(v) => v.extend(std::iter::repeat_n(u8::try_from(u).unwrap_or(0), n)),
+            Units::Ucs2(v) => v.extend(std::iter::repeat_n(u16::try_from(u).unwrap_or(0), n)),
+            Units::Wide(v) => v.extend(std::iter::repeat_n(u, n)),
+        }
+        Ok(())
+    }
+
+    /// Appends `src[start..end]` (clamped to `src`).
+    fn extend_from(&mut self, src: &Units, start: usize, end: usize) -> PcResult<()> {
+        let end = end.min(src.len());
+        let start = start.min(end);
+        let part_max = match src {
+            Units::Narrow(s) => s
+                .get(start..end)
+                .unwrap_or(&[])
+                .iter()
+                .copied()
+                .max()
+                .map_or(0, u32::from),
+            Units::Ucs2(s) => s
+                .get(start..end)
+                .unwrap_or(&[])
+                .iter()
+                .copied()
+                .max()
+                .map_or(0, u32::from),
+            Units::Wide(s) => s
+                .get(start..end)
+                .unwrap_or(&[])
+                .iter()
+                .copied()
+                .max()
+                .unwrap_or(0),
+        };
+        self.widen_for(part_max)?;
+        each!(self, d => each!(src, s => append(d, s.get(start..end).unwrap_or(&[]))))
+    }
+
+    /// Appends code points, widening once for the widest of them.
+    fn extend_code_points(&mut self, cps: &[u32]) -> PcResult<()> {
+        self.widen_for(cps.iter().copied().max().unwrap_or(0))?;
+        each!(self, d => append(d, cps))
+    }
+
+    fn into_wide(self) -> PcResult<Vec<u32>> {
+        match self {
+            Units::Wide(v) => Ok(v),
+            Units::Ucs2(v) => convert_units(&v),
+            Units::Narrow(v) => convert_units(&v),
+        }
+    }
+
+    /// The bytes formatter only ever stores bytes and ASCII text.
+    fn into_bytes(self) -> PcResult<Vec<u8>> {
+        match self {
+            Units::Narrow(v) => Ok(v),
+            Units::Ucs2(v) => convert_units(&v),
+            Units::Wide(v) => convert_units(&v),
+        }
+    }
+}
+
+/// [`units_of`] for borrowed code points.
+fn units_from(cps: &[u32]) -> PcResult<Units> {
+    let maxchar = cps.iter().copied().max().unwrap_or(0);
+    Ok(if maxchar > 0xFFFF {
+        Units::Wide(convert_units(cps)?)
+    } else if maxchar > 0xFF {
+        Units::Ucs2(convert_units(cps)?)
+    } else {
+        Units::Narrow(convert_units(cps)?)
+    })
+}
+
+/// `cps` stored in the narrowest kind that holds them.
+fn units_of(cps: Vec<u32>) -> PcResult<Units> {
+    let mut units = Units::Narrow(Vec::new());
+    units.widen_for(cps.iter().copied().max().unwrap_or(0))?;
+    if let Units::Wide(_) = units {
+        return Ok(Units::Wide(cps));
+    }
+    each!(&mut units, d => append(d, &cps))?;
+    Ok(units)
 }
 
 /// Bytes `_Py_dg_dtoa`'s `rv_alloc(i)` takes: a `Bigint` whose digit
@@ -84,11 +250,19 @@ fn dtoa_alloc(i: usize) -> usize {
     j.saturating_add(28)
 }
 
+/// Precisions below this keep [`float_memory`] far under the budget.
+const SMALL_PRECISION: usize = 1 << 20;
+
 /// CPython's peak allocation (bytes) for `PyOS_double_to_string(x, ch,
 /// prec)`: the dtoa digits are alive while the output buffer is built,
 /// then the buffer and its str copy are alive together.
 fn float_memory(x: f64, ch: char, prec: usize, alt: bool) -> usize {
     if !x.is_finite() {
+        return 0;
+    }
+    // Every estimate below is a few MiB at most for these precisions (a
+    // finite f64 has at most 309 integer digits): skip the `log10`.
+    if prec < SMALL_PRECISION {
         return 0;
     }
     // Digits before the point; at most 309 for a finite f64.
@@ -233,6 +407,17 @@ fn mapping_of(mode: Mode, args: &Value) -> Option<&Value> {
 
 /// `PyObject_GetItem(mapping, key)` for a str (text mode) or bytes key.
 fn lookup<'a>(mode: Mode, mapping: &'a Value, key: &[u32]) -> PcResult<&'a Value> {
+    // Hit in a dict with a str key: compare in place, without building the
+    // key value. Misses and other cases take the general path below.
+    if let (Mode::Text, Value::Dict(pairs)) = (mode, mapping) {
+        let found = pairs.iter().find_map(|(k, v)| match k {
+            Value::Str(s) if s.code_points() == key => Some(v),
+            _ => None,
+        });
+        if let Some(v) = found {
+            return Ok(v);
+        }
+    }
     let key_value = match mode {
         Mode::Text => Value::Str(PyStr::from_code_points(key.to_vec())),
         Mode::Bytes => Value::Bytes(
@@ -425,24 +610,21 @@ fn parse_spec<'a>(
 
 /// A converted argument, before padding.
 struct Converted {
-    units: Vec<u32>,
+    units: Units,
     /// Numeric conversions take a sign and zero padding.
     numeric: bool,
 }
 
-fn text_units(s: &str) -> Vec<u32> {
-    s.chars().map(u32::from).collect()
-}
-
-/// [`text_units`] for output that may be too large to allocate.
-fn try_text_units(s: &str) -> PcResult<Vec<u32>> {
-    let mut units = try_vec(s.len())?;
-    units.extend(s.chars().map(u32::from));
-    Ok(units)
+fn text_units(s: String) -> PcResult<Units> {
+    if s.is_ascii() {
+        Ok(Units::Narrow(s.into_bytes()))
+    } else {
+        units_of(s.chars().map(u32::from).collect())
+    }
 }
 
 /// `int(v)` for `%d %i %u`, `operator.index(v)` for `%o %x %X`.
-fn integer_arg(v: &Value, ch: char) -> PcResult<BigInt> {
+fn integer_arg(v: &Value, ch: char) -> PcResult<Cow<'_, BigInt>> {
     let wrong = || {
         let what = if matches!(ch, 'o' | 'x' | 'X') {
             "an integer"
@@ -455,8 +637,8 @@ fn integer_arg(v: &Value, ch: char) -> PcResult<BigInt> {
         ))
     };
     match v {
-        Value::Int(n) => Ok(n.clone()),
-        Value::Bool(b) => Ok(BigInt::from(u8::from(*b))),
+        Value::Int(n) => Ok(Cow::Borrowed(n)),
+        Value::Bool(b) => Ok(Cow::Owned(BigInt::from(u8::from(*b)))),
         Value::Float(_) if matches!(ch, 'o' | 'x' | 'X') => Err(wrong()),
         Value::Float(f) => {
             if f.is_nan() {
@@ -466,7 +648,9 @@ fn integer_arg(v: &Value, ch: char) -> PcResult<BigInt> {
                     "cannot convert float infinity to integer",
                 ))
             } else {
-                BigInt::from_f64(f.trunc()).ok_or_else(wrong)
+                BigInt::from_f64(f.trunc())
+                    .map(Cow::Owned)
+                    .ok_or_else(wrong)
             }
         }
         _ => Err(wrong()),
@@ -475,7 +659,7 @@ fn integer_arg(v: &Value, ch: char) -> PcResult<BigInt> {
 
 /// Port of `_PyUnicode_FormatLong`: sign, `0o`/`0x` when alternate,
 /// zero-extended to `prec` digits, uppercased for `X`.
-fn format_long(n: &BigInt, ch: char, spec: &Spec) -> PcResult<Vec<u32>> {
+fn format_long(n: &BigInt, ch: char, spec: &Spec) -> PcResult<Units> {
     let (base, prefix) = match ch {
         'o' => (8, "0o"),
         'x' | 'X' => (16, "0x"),
@@ -487,26 +671,35 @@ fn format_long(n: &BigInt, ch: char, spec: &Spec) -> PcResult<Vec<u32>> {
     if prec > i32::MAX as usize - 3 {
         return Err(PyError::overflow_error("precision too large"));
     }
-    let digits = int_magnitude_digits(n, base)?;
+    let mut small = [0_u8; 64];
+    let owned;
+    let digits: &[u8] = match n.magnitude().to_u64() {
+        Some(m) => u64_digits(m, base, &mut small),
+        None => {
+            owned = int_magnitude_digits(n, base)?;
+            owned.as_bytes()
+        }
+    };
     let len = digits.len().max(prec).saturating_add(3);
     // The zero-filled copy is made as bytes, then decoded to a str.
     if prec > digits.len() {
         check_size(len.saturating_mul(2), 0)?;
     }
-    let mut out = String::new();
+    // Only ASCII is written, so the bytes are the narrow str kind.
+    let mut out = Vec::new();
     out.try_reserve_exact(len).map_err(|_| memory_error())?;
     if n.sign() == num_bigint::Sign::Minus {
-        out.push('-');
+        out.push(b'-');
     }
     if spec.flags.alt {
-        out.push_str(prefix);
+        out.extend_from_slice(prefix.as_bytes());
     }
-    out.extend(std::iter::repeat_n('0', prec.saturating_sub(digits.len())));
-    out.push_str(&digits);
+    out.extend(std::iter::repeat_n(b'0', prec.saturating_sub(digits.len())));
+    out.extend_from_slice(digits);
     if ch == 'X' {
-        out = out.to_ascii_uppercase();
+        out.make_ascii_uppercase();
     }
-    try_text_units(&out)
+    Ok(Units::Narrow(out))
 }
 
 /// `PyFloat_AsDouble(v)`, with the bytes formatter's error rewording.
@@ -589,23 +782,31 @@ fn unsupported(mode: Mode, spec: &Spec, index: usize) -> PyError {
 /// Port of `unicode_format_arg_format` and the bytes `switch (c)`.
 fn convert(mode: Mode, spec: &Spec, v: &Value, index: usize) -> PcResult<Converted> {
     let ch = char::from_u32(spec.ch).unwrap_or('\0');
-    let truncate = |mut units: Vec<u32>| {
+    let truncate = |mut units: Units| {
         if let Some(p) = spec.prec {
             units.truncate(p);
         }
         units
     };
     let units = match (mode, ch) {
-        (Mode::Text, 's') => truncate(value_str(v)?.into_code_points()),
-        (Mode::Text, 'r') => truncate(text_units(&value_repr(v)?)),
-        (Mode::Text, 'a') | (Mode::Bytes, 'r' | 'a') => truncate(text_units(&ascii_repr(v)?)),
+        (Mode::Text, 's') => truncate(match v {
+            // Copied once, straight into the narrowest kind.
+            Value::Str(s) => units_from(s.code_points())?,
+            other => units_of(value_str(other)?.into_code_points())?,
+        }),
+        (Mode::Text, 'r') => truncate(text_units(value_repr(v)?)?),
+        (Mode::Text, 'a') | (Mode::Bytes, 'r' | 'a') => truncate(text_units(ascii_repr(v)?)?),
         (Mode::Bytes, 's' | 'b') => match v {
-            Value::Bytes(b) | Value::ByteArray(b) => {
-                truncate(b.iter().map(|&u| u32::from(u)).collect())
-            }
+            Value::Bytes(b) | Value::ByteArray(b) => truncate(Units::Narrow(b.clone())),
             other => return Err(bytes_like_required(other)),
         },
         (_, 'd' | 'i' | 'u' | 'o' | 'x' | 'X') => {
+            // `_PyBytes_FormatEx` rewrites `%i` to `%d` before converting.
+            let ch = if mode == Mode::Bytes && ch == 'i' {
+                'd'
+            } else {
+                ch
+            };
             let n = integer_arg(v, ch)?;
             return Ok(Converted {
                 units: format_long(&n, ch, spec)?,
@@ -622,11 +823,11 @@ fn convert(mode: Mode, spec: &Spec, v: &Value, index: usize) -> PcResult<Convert
                 ..DtoaFlags::default()
             };
             return Ok(Converted {
-                units: try_text_units(&try_double_to_string(x, ch, prec, flags)?)?,
+                units: text_units(try_double_to_string(x, ch, prec, flags)?)?,
                 numeric: true,
             });
         }
-        (_, 'c') => vec![char_arg(mode, v)?],
+        (_, 'c') => units_of(vec![char_arg(mode, v)?])?,
         _ => return Err(unsupported(mode, spec, index)),
     };
     Ok(Converted {
@@ -639,7 +840,7 @@ fn convert(mode: Mode, spec: &Spec, v: &Value, index: usize) -> PcResult<Convert
 /// the writer grows to its current length plus `width`, over-allocated by a
 /// quarter unless this is the template's last directive.
 fn check_pad_memory(
-    out: &[u32],
+    out: &Units,
     width: usize,
     fill: u32,
     conv: &Converted,
@@ -653,16 +854,12 @@ fn check_pad_memory(
     if total.saturating_mul(4) < (1 << 28) {
         return Ok(());
     }
-    let maxchar = out
-        .iter()
-        .chain(conv.units.iter())
-        .copied()
-        .fold(fill, u32::max);
+    let maxchar = out.maxchar().max(conv.units.maxchar()).max(fill);
     check_size(total, maxchar)
 }
 
 /// Port of `unicode_format_arg_output` (the bytes formatter pads the same way).
-fn pad(out: &mut Vec<u32>, spec: &Spec, conv: &Converted, last: bool) -> PcResult<()> {
+fn pad(out: &mut Units, spec: &Spec, conv: &Converted, last: bool) -> PcResult<()> {
     let buf = &conv.units;
     let mut sign = conv.numeric;
     let fill = if sign && spec.flags.zero {
@@ -675,8 +872,8 @@ fn pad(out: &mut Vec<u32>, spec: &Spec, conv: &Converted, last: bool) -> PcResul
     let mut pindex = 0usize;
     let mut signchar = 0u32;
     if sign {
-        match buf.first() {
-            Some(&c) if c == u32::from(b'-') || c == u32::from(b'+') => {
+        match buf.get(0) {
+            Some(c) if c == u32::from(b'-') || c == u32::from(b'+') => {
                 signchar = c;
                 len -= 1;
                 pindex += 1;
@@ -689,14 +886,16 @@ fn pad(out: &mut Vec<u32>, spec: &Spec, conv: &Converted, last: bool) -> PcResul
     let mut width = spec.width.unwrap_or(0).max(len);
     if width > len {
         check_pad_memory(out, width, fill, conv, last)?;
-        reserve(out, width)?;
+        // Like `_PyUnicodeWriter_Prepare`: widen to the final kind before
+        // the padding is written, so it is never copied to a wider kind.
+        out.widen_for(conv.units.maxchar().max(fill))?;
+        out.reserve(width)?;
     }
     let alt_prefix = spec.flags.alt && matches!(char::from_u32(spec.ch), Some('o' | 'x' | 'X'));
-    let prefix = buf.get(pindex..pindex + 2).unwrap_or(&[]).to_vec();
 
     if sign {
         if fill != space {
-            out.push(signchar);
+            out.push(signchar)?;
         }
         if width > len {
             width -= 1;
@@ -704,38 +903,38 @@ fn pad(out: &mut Vec<u32>, spec: &Spec, conv: &Converted, last: bool) -> PcResul
     }
     if alt_prefix {
         if fill != space {
-            out.extend_from_slice(&prefix);
+            out.extend_from(buf, pindex, pindex + 2)?;
             pindex += 2;
         }
         width = width.saturating_sub(2);
         len = len.saturating_sub(2);
     }
     if width > len && !spec.flags.ljust {
-        out.extend(std::iter::repeat_n(fill, width - len));
+        out.push_fill(fill, width - len)?;
         width = len;
     }
     if fill == space {
         if sign {
-            out.push(signchar);
+            out.push(signchar)?;
         }
         if alt_prefix {
-            out.extend_from_slice(&prefix);
+            out.extend_from(buf, pindex, pindex + 2)?;
             pindex += 2;
         }
     }
-    out.extend_from_slice(buf.get(pindex..pindex + len).unwrap_or(&[]));
+    out.extend_from(buf, pindex, pindex + len)?;
     if width > len {
-        out.extend(std::iter::repeat_n(space, width - len));
+        out.push_fill(space, width - len)?;
     }
     Ok(())
 }
 
 /// The shared formatting loop (`PyUnicode_Format` / `_PyBytes_FormatEx`).
-fn format(mode: Mode, template: &[u32], values: &Value) -> PcResult<Vec<u32>> {
+fn format(mode: Mode, template: &[u32], values: &Value) -> PcResult<Units> {
     let percent = u32::from(b'%');
     let dict = mapping_of(mode, values);
     let mut args = Args::new(values);
-    let mut out = Vec::with_capacity(template.len());
+    let mut out = Units::Narrow(try_vec(template.len())?);
     let mut cur = Cursor {
         units: template,
         pos: 0,
@@ -743,12 +942,20 @@ fn format(mode: Mode, template: &[u32], values: &Value) -> PcResult<Vec<u32>> {
     };
     while let Some(u) = cur.next() {
         if u != percent {
-            out.push(u);
+            // Copy the whole literal run up to the next '%' at once.
+            let start = cur.pos - 1;
+            let rest = cur.units.get(cur.pos..).unwrap_or_default();
+            let end = rest
+                .iter()
+                .position(|&c| c == percent)
+                .map_or(cur.units.len(), |i| cur.pos + i);
+            out.extend_code_points(cur.units.get(start..end).unwrap_or_default())?;
+            cur.pos = end;
             continue;
         }
         if cur.peek() == percent {
             cur.pos += 1;
-            out.push(percent);
+            out.push(percent)?;
             continue;
         }
         let spec = parse_spec(mode, &mut cur, &mut args, dict)?;
@@ -897,6 +1104,27 @@ mod tests {
         assert_eq!(
             bfmt(b"%9223372036854775807s", Value::Bytes(vec![])).err(),
             Some(PyError::new(ExcKind::MemoryError, ""))
+        );
+    }
+
+    #[test]
+    fn mixed_kinds_widen() {
+        let t = Value::Tuple(vec![
+            Value::str("\u{e9}"),
+            Value::str("\u{1234}"),
+            Value::str("\u{1f600}"),
+            Value::int(255),
+        ]);
+        assert_eq!(
+            ok("a%-3s|%3s|%2s|%#06x", t),
+            "a\u{e9}  |  \u{1234}| \u{1f600}|0x00ff"
+        );
+        assert_eq!(
+            bfmt(
+                b"%*r",
+                Value::Tuple(vec![Value::int(3), Value::Bytes(vec![])])
+            ),
+            Ok(Value::Bytes(b"b''".to_vec()))
         );
     }
 

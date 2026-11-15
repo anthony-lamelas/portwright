@@ -1,22 +1,24 @@
+//! Fuzzes `pc_format_port_core::floor_div`: errors are expected, panics are bugs.
 #![no_main]
-//! Fuzzes `pc_format_port_core::floor_div`. Python exceptions are expected; only
-//! panics, aborts, hangs and runaway allocations are failures.
 
-use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
-use pc_format_port_core as core_api;
+use pc_format_port_core as core;
+use pc_format_port_core::{Value};
+use pcf_fuzz::{Gen};
 
-#[path = "../common/mod.rs"]
-mod common;
-
-fn go(u: &mut Unstructured) -> arbitrary::Result<()> {
-    let a = if u.ratio(3u8, 4)? { common::number(u)? } else { common::value(u)? };
-    let b = if u.ratio(3u8, 4)? { common::number(u)? } else { common::value(u)? };
-    common::run(core_api::floor_div(&a, &b));
-    Ok(())
+/// Two operands: numbers mostly, sometimes any value.
+fn binary_operands(g: &mut Gen<'_>) -> (Value, Value) {
+    let one = |g: &mut Gen<'_>| match g.pick(8) {
+        0..=6 => g.number(),
+        _ => g.value(1),
+    };
+    let a = one(g);
+    let b = one(g);
+    (a, b)
 }
 
 fuzz_target!(|data: &[u8]| {
-    let mut u = Unstructured::new(data);
-    let _ = go(&mut u);
+    let mut g = Gen::bounded(data);
+    let (a, b) = binary_operands(&mut g);
+    let _ = core::floor_div(&a, &b);
 });
