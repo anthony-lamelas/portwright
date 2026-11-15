@@ -216,7 +216,9 @@ def test_a_rejected_fix_reaches_the_next_debugger(workspaces, tmp_path):
         config=SimpleNamespace(fix_rounds=3), workspaces=workspaces, _agent=agent,
         _flush_regressions=lambda: None, _port_mounts=lambda *_: {}, _log=lambda _: None,
         _gate_full=lambda *_: next(gate_results), _target=lambda name: tmp_path / "targets" / name,
+        paths=SimpleNamespace(control=tmp_path / "control"),
     )
+    stub._rounds_asking_a_person = lambda name, ignore=frozenset(): Porter._rounds_asking_a_person(stub, name, ignore)
     Porter._fix_until(stub, "x", lambda: next(verdicts), "Fix it.")
 
     assert seen == ["one\n", "one\nfix\n"]
@@ -224,6 +226,55 @@ def test_a_rejected_fix_reaches_the_next_debugger(workspaces, tmp_path):
     assert "needs a second fix" in prompts[1]
     assert (workspaces.repo / "a.txt").read_text() == "one\nfix\nfix\n"
 
+
+
+def fix_loop_stub(workspaces, tmp_path, agent, rounds=5):
+    stub = SimpleNamespace(
+        config=SimpleNamespace(fix_rounds=rounds), workspaces=workspaces, _agent=agent,
+        _flush_regressions=lambda: None, _port_mounts=lambda *_: {}, _log=lambda _: None,
+        _gate_full=lambda *_: (False, "still failing"), _target=lambda name: tmp_path / "targets" / name,
+        paths=SimpleNamespace(control=tmp_path / "control"),
+    )
+    stub._rounds_asking_a_person = lambda name, ignore=frozenset(): Porter._rounds_asking_a_person(stub, name, ignore)
+    return stub
+
+
+def test_a_fix_loop_stops_once_two_rounds_ask_a_person(workspaces, tmp_path):
+    """#65: isodate's debuggers filed the same request for a person five rounds running."""
+    from portwright.orchestrator import RunStopped
+
+    sessions = []
+
+    def agent(_role, task, _prompt, _mounts):
+        sessions.append(task)
+        (workspaces.worktrees / task / "a.txt").write_text(f"try {len(sessions)}\n")
+        requests = tmp_path / "control" / "requests"
+        requests.mkdir(parents=True, exist_ok=True)
+        (requests / f"{task}-allow-sys.json").write_text('{"type": "shared_change", "reason": "needs sys"}')
+
+    stub = fix_loop_stub(workspaces, tmp_path, agent)
+    with pytest.raises(RunStopped, match="needs a person's decision, requested in 2 rounds"):
+        Porter._fix_until(stub, "final_parity", lambda: SimpleNamespace(passed=False, for_agent=lambda: "fails"), "Fix it.")
+    assert sessions == ["fix-final_parity-1", "fix-final_parity-2"]
+
+
+def test_requests_from_before_a_resume_dont_stop_the_loop_again(workspaces, tmp_path):
+    from portwright.orchestrator import RunStopped
+
+    requests = tmp_path / "control" / "requests"
+    requests.mkdir(parents=True)
+    for n in (1, 2, 3):  # filed before a person granted something and resumed the run
+        (requests / f"fix-final_parity-{n}-allow-sys.json").write_text("{}")
+    sessions = []
+
+    def agent(_role, task, _prompt, _mounts):
+        sessions.append(task)
+        (workspaces.worktrees / task / "a.txt").write_text(f"try {len(sessions)}\n")
+
+    stub = fix_loop_stub(workspaces, tmp_path, agent, rounds=3)
+    with pytest.raises(RunStopped, match="still failing after 3 rounds"):
+        Porter._fix_until(stub, "final_parity", lambda: SimpleNamespace(passed=False, for_agent=lambda: "fails"), "Fix it.")
+    assert len(sessions) == 3
 
 def test_non_conflicting_parallel_work_both_merge_after_rebasing(workspaces):
     first = workspaces.create("t1")

@@ -354,3 +354,56 @@ def test_strict_bindings_leave_the_core_free_to_name_its_own_repr(tmp_path):
     result = check_integrity(port, strict_bindings=True, bindings_dir="crates/textkit-py")
     # The fixture's bindings aren't strict themselves; only the core matters here.
     assert not any("textkit-core" in problem for problem in result.details["problems"]), result.details
+
+
+
+def test_the_harness_submodule_file_may_import_sys_only_unchanged(tmp_path):
+    """#64: registering submodules in sys.modules needs sys. The harness's own file may
+    do it; the same import anywhere else, or in an edited copy, is still refused."""
+    from portwright.scaffold import SUBMODULES_FILE, SUBMODULES_RS
+
+    port = make_port(tmp_path)
+    harness_file = port / "crates/textkit-py/src" / SUBMODULES_FILE
+    harness_file.write_text(SUBMODULES_RS)
+    assert check_integrity(port).passed, check_integrity(port).details
+
+    harness_file.write_text(SUBMODULES_RS.replace('import("sys")', 'import("sys")?;\n    let _ = root.py().import("textkit")'))
+    edited = check_integrity(port)
+    assert not edited.passed and any("imports" in problem for problem in edited.details["problems"])
+
+    harness_file.write_text(SUBMODULES_RS)
+    elsewhere = port / "crates/textkit-py/src/lib.rs"
+    elsewhere.write_text(elsewhere.read_text() + '\nfn a(py: Python<\'_>) { let _ = py.import("sys"); }\n')
+    assert any("imports Python module sys" in problem for problem in check_integrity(port).details["problems"])
+
+
+def test_strict_bindings_still_refuse_the_submodule_file(tmp_path):
+    from portwright.scaffold import SUBMODULES_FILE, SUBMODULES_RS
+
+    port = make_port(tmp_path)
+    (port / "crates/textkit-py/src" / SUBMODULES_FILE).write_text(SUBMODULES_RS)
+    result = check_integrity(port, strict_bindings=True)
+    assert any(SUBMODULES_FILE in problem for problem in result.details["problems"])
+
+
+def test_mocks_that_arrive_through_fixtures_count_as_internals(tmp_path):
+    """#66: isodate's test_format gets monkeypatch through a tz_patch fixture."""
+    from portwright.gates.upstream_tests import private_test_names
+
+    tests = tmp_path / "tests"
+    (tests / "sub").mkdir(parents=True)
+    (tests / "conftest.py").write_text(
+        "import pytest\n"
+        "@pytest.fixture\ndef clock(monkeypatch):\n    monkeypatch.setattr('time.time', lambda: 0)\n"
+    )
+    (tests / "sub" / "test_a.py").write_text(
+        "import pytest\n"
+        "@pytest.fixture\ndef tz_patch(monkeypatch):\n    monkeypatch.setattr('m.X', 1)\n"
+        "@pytest.fixture\ndef wrapped(tz_patch):\n    return 1\n"
+        "@pytest.fixture\ndef plain():\n    return 2\n"
+        "def test_direct(tz_patch):\n    pass\n"
+        "def test_through_another(wrapped):\n    pass\n"
+        "def test_conftest(clock):\n    pass\n"
+        "def test_clean(plain):\n    pass\n"
+    )
+    assert private_test_names(tests) == {"test_direct", "test_through_another", "test_conftest"}

@@ -701,6 +701,18 @@ class Porter:
             return CONFLICT, f"{merged.detail}\nYour work itself wasn't rejected.\n{notes}"
         return RETRY, f"{text}\n{notes}"
 
+    def _rounds_asking_a_person(self, name: str, ignore: set[str] = frozenset()) -> list[str]:
+        """Requests filed by this fix loop's rounds, one per round that filed any. Requests
+        in ``ignore`` came before a person's ruling and resume, so they don't count."""
+        folder = self.paths.control / "requests"
+        pattern = re.compile(rf"fix-{re.escape(name)}-(\d+)-")
+        rounds: dict[str, str] = {}
+        for path in sorted(folder.glob("fix-*.json")) if folder.is_dir() else ():
+            match = pattern.match(path.name)
+            if match and path.name not in ignore:
+                rounds.setdefault(match.group(1), path.read_text(encoding="utf-8", errors="replace"))
+        return [rounds[key] for key in sorted(rounds, key=int)]
+
     def _shared_change_attempts(self, task_id: str) -> int:
         """How many attempts on this task filed a request to change frozen code."""
         folder = self.paths.control / "requests"
@@ -762,6 +774,7 @@ class Porter:
         """Send failures to a debugger until the check passes or the rounds run out."""
         verdict = check()
         carried: str | None = None  # the last rejected attempt, so its work isn't redone
+        earlier_requests = {path.name for path in (self.paths.control / "requests").glob("*.json")} if (self.paths.control / "requests").is_dir() else set()
         rejection = ""
         for round_number in range(1, self.config.fix_rounds + 1):
             if verdict.passed:
@@ -784,6 +797,14 @@ class Porter:
             else:
                 rejection = merged.detail[-4000:]
                 self._log(f"  rejected {task}: {merged.reason}\n{rejection[-1500:]}")
+                asked = self._rounds_asking_a_person(name, ignore=earlier_requests)
+                if len(asked) >= 2:
+                    # Two debuggers agree only a person can unblock this. isodate's run spent
+                    # five rounds filing the same sys.modules request (#65).
+                    raise RunStopped(
+                        f"{name} needs a person's decision, requested in {len(asked)} rounds: "
+                        f"{asked[-1][:1500]}\nSee control/requests, then grant, approve or decide, and resume."
+                    )
                 if merged.reason == "gate":
                     carried = self.workspaces.revision(workspace)
                     self.workspaces.keep(carried)
