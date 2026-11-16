@@ -71,7 +71,7 @@ def test_findall_finditer_split(pattern):
 
 
 def test_flags_combinations():
-    flag_sets = [0, re.I, re.M, re.S, re.X, re.A, re.I | re.A, re.I | re.M | re.S, re.U, re.L, re.A | re.U, -1, 2**40]
+    flag_sets = [0, re.I, re.M, re.S, re.X, re.A, re.I | re.A, re.I | re.M | re.S, re.U, re.L, re.A | re.U, -1 & ~re.DEBUG, 2**40]  # DEBUG is refused: test_debug_flag_is_refused
     for pattern, flags in itertools.product(["^a.", "a$", r"\w+", "(?i)b", "[k]", "s", " a # x", "(?u)x"], flag_sets):
         for subject in ["a\nA\nb", "K", "ſ", "ﬀ", "x b", "É"]:
             same(pc.search, re.search, pattern, subject, flags)
@@ -205,3 +205,29 @@ def test_pattern_and_match_arguments_are_type_checked():
         pc.pattern_sub(1, b"x", b"a")
     with pytest.raises(AttributeError, match="^'int' object has no attribute 'expand'$"):
         pc.match_expand(1, b"x")
+
+
+DEBUG_REFUSED = "pc_re doesn't support re.DEBUG, which prints CPython's internal parse tree"
+
+
+@pytest.mark.parametrize("call", [
+    lambda f: pc.compile("a+", f), lambda f: pc.search("a", "a", f), lambda f: pc.match("a", "a", f),
+    lambda f: pc.fullmatch("a", "a", f), lambda f: pc.findall("a", "a", f), lambda f: pc.finditer("a", "a", f),
+    lambda f: pc.sub("a", "b", "a", 0, f), lambda f: pc.subn("a", "b", "a", 0, f), lambda f: pc.split("a", "a", 0, f),
+])
+@pytest.mark.parametrize("flags", [128, re.DEBUG, re.DEBUG | re.IGNORECASE, -1, 2**70 + 128])
+def test_debug_flag_is_refused(call, flags, capsys):
+    """Open item M: DEBUG printed CPython's parse tree and sre bytecode, which no port can reproduce."""
+    with pytest.raises(ValueError) as caught:
+        call(flags)
+    assert str(caught.value) == DEBUG_REFUSED
+    assert capsys.readouterr().out == ""
+
+
+def test_other_flags_and_bad_flag_types_still_reach_re():
+    assert pc.pattern_flags(pc.compile("a", re.IGNORECASE | 256)) == re.compile("a", re.IGNORECASE | 256).flags
+    with pytest.raises(TypeError):
+        pc.compile("a", "x")
+    with pytest.raises(TypeError) as caught:  # text arguments are checked before the flags
+        pc.search(1, "a", 128)
+    assert "pattern must be str" in str(caught.value)

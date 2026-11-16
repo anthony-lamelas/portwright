@@ -103,6 +103,33 @@ def test_hand_written_canaries_replace_ast_mutants(tmp_path):
     assert not result.passed
 
 
+def test_hand_written_bugs_no_upstream_test_notices_are_told_apart(tmp_path):
+    """A no-op hand-written bug used to count as a blind spot in the checks (open item C)."""
+    from portwright.gates.canaries import confirm_written_canaries, load_written_canaries
+
+    bugs = tmp_path / "canaries"
+    bugs.mkdir()
+    (bugs / "001-upper.py").write_text(
+        "# canary: slug keeps capitals\n_orig_slug = slug\ndef slug(text, max_len=None, sep='-'):\n"
+        "    return _orig_slug(text, max_len, sep).upper()\n"
+    )
+    (bugs / "002-noop.py").write_text("# canary: changes nothing\n_unused = 1\n")
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    (tests / "test_slug.py").write_text("import textkit\n\ndef test_slug():\n    assert textkit.slug('Hello World') == 'hello-world'\n")
+    written = load_written_canaries(bugs, "textkit/__init__.py")
+    found = confirm_written_canaries(tests, TEXTKIT, "textkit", written, workers=2)
+    assert list(found["confirmed"]) == ["001-upper: slug keeps capitals"]
+    assert found["confirmed"]["001-upper: slug keeps capitals"] == ["tests.test_slug::test_slug"]
+    assert found["unconfirmed"] == ["002-noop: changes nothing"]
+    result = canary_gate(GOOD, TEXTKIT, "textkit", minimum=0.5, max_examples=30, workers=2,
+                         written=written, unconfirmed=set(found["unconfirmed"]))
+    assert result.details["missed"] == []
+    assert [m["bug"] for m in result.details["missed_unconfirmed"]] == ["002-noop: changes nothing"]
+    assert "1/1" in result.summary and "no upstream test notices" in result.summary
+    assert result.passed
+
+
 def test_vendored_crates_are_copied_in_and_frozen(tmp_path):
     from portwright.evaluation import _shared_problems
     from portwright.orchestrator import Config, Porter

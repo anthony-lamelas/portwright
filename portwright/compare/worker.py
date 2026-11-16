@@ -24,6 +24,7 @@ import re
 import struct
 import sys
 import time
+import warnings
 
 ITER_LIMIT = 1000
 DEPTH_LIMIT = 40
@@ -306,13 +307,35 @@ def _resolve(request, module, handles):
     return target
 
 
+# Categories Python's default filters hide outside __main__. They mostly come from the
+# standard library's own internals (a library calling datetime.utcnow()), which a port
+# has no reason to copy and its users don't see.
+_HIDDEN_BY_DEFAULT = (DeprecationWarning, PendingDeprecationWarning, ImportWarning, ResourceWarning)
+
+
+def _describe_warnings(caught) -> list:
+    """The warnings a call raised, in order: class and message, not where they came from."""
+    return [
+        {"category": _class_name(item.category), "message": _safe(str, item.message)}
+        for item in caught
+        if not issubclass(item.category, _HIDDEN_BY_DEFAULT)
+    ]
+
+
 def run_request(request, module, handles):
-    """Run one call, recording the result or exception, and any changed arguments."""
+    """Run one call, recording the result or exception, any warnings, and any changed arguments.
+
+    Warnings are part of the outcome: ``re`` warns ``FutureWarning`` for patterns like
+    ``[[:alpha:]]``, and a port that never warned used to match (open item G). Every
+    occurrence is recorded (filter "always"), so a warning Python would show once per
+    place in the code is compared on every call, on both sides alike.
+    """
     args = [decode(item, handles) for item in request.get("args", [])]
     kwargs = {key: decode(item, handles) for key, item in request.get("kwargs", {}).items()}
     captured = io.StringIO()
     outcome = {}
-    with contextlib.redirect_stdout(captured):
+    with contextlib.redirect_stdout(captured), warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
         try:
             target = _resolve(request, module, handles)
             value = target if request["op"] == "get" else target(*args, **kwargs)
@@ -322,6 +345,7 @@ def run_request(request, module, handles):
     outcome["args_after"] = [canon(item, handles) for item in args]
     outcome["kwargs_after"] = {key: canon(item, handles) for key, item in kwargs.items()}
     outcome["stdout"] = captured.getvalue()
+    outcome["warnings"] = _describe_warnings(caught)
     return outcome
 
 

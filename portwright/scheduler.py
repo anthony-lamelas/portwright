@@ -247,6 +247,24 @@ class Workspaces:
         self._git("commit", "-qm", message, cwd=path)
         return True
 
+    def added_lines(self, path: str | Path, *, under: str = "crates", suffix: str = ".rs") -> dict[str, set[int]]:
+        """Lines the worktree's commits add since main, by file: ``{file: {line numbers}}``."""
+        diff = self._git(
+            "diff", "--unified=0", "--no-color", "--no-ext-diff", f"{self.branch}...HEAD", "--", under, cwd=path,
+        ).stdout
+        added: dict[str, set[int]] = {}
+        current = None
+        for line in diff.splitlines():
+            if line.startswith("+++ "):
+                name = line[4:].removeprefix("b/")
+                current = added.setdefault(name, set()) if name.endswith(suffix) else None
+            elif line.startswith("@@") and current is not None:
+                # @@ -a,b +c,d @@: d lines starting at c (d omitted means 1)
+                new = line.split(" ")[2].lstrip("+")
+                start, _, count = new.partition(",")
+                current.update(range(int(start), int(start) + (int(count) if count else 1)))
+        return {name: lines for name, lines in added.items() if lines}
+
     def changed_since_branch(self, path: str | Path) -> bool:
         ahead = self._git("rev-list", "--count", f"{self.branch}..HEAD", cwd=path).stdout.strip()
         return ahead != "0"

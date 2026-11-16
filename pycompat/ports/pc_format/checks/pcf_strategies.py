@@ -79,9 +79,10 @@ def values(depth=2):
     )
 
 
-# Values that the shim refuses: Decimal, sets of strings.
+# Values that the shim refuses: Decimal, sets of strings, sets holding NaN with other items.
 REFUSED = [Decimal("1.5"), {"a"}, frozenset({b"x"}), {("a", 1)}, [Decimal(2)], {"k": Decimal("0")},
-           (1, {"s"}), frozenset({frozenset({"a"})}), {1: [frozenset({"z"})]}]
+           (1, {"s"}), frozenset({frozenset({"a"})}), {1: [frozenset({"z"})]},
+           {float("nan"), 1}, frozenset({(float("nan"), 2), None}), [{1.5, frozenset({float("nan")})}]]
 
 
 def refused():

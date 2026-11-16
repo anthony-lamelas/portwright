@@ -11,6 +11,15 @@
 
 This report shows the port matched the original on the inputs tested. It doesn't prove the two are equivalent.
 
+## Changes since this report (by hand, not a new run)
+
+- **`re.DEBUG` is refused** (harness issue #76). The shim raises `ValueError("pc_re doesn't support re.DEBUG, which prints CPython's internal parse tree")` for flags with the DEBUG bit, after its text checks, and the core does the same (`api.rs`, `refuse_debug`). The stdout approvals below no longer come into play.
+- **No `rust_decimal`** (#77). The bindings name a `Decimal` argument instead of reading its value with `str()`, and the PyO3 feature and dependency are gone, so the port passes `--strict-bindings`.
+- **Re-checked** in the toolchain image (CPython 3.12.14, seed 20261101, 150 examples) against the current shim: strict integrity passes, and all 242 shim tests pass. The differential finds these known differences, which aren't approved:
+  - `error(Decimal('1'))`: the message is `"1"` in CPython and `"<Decimal object>"` in the port. The shim exports `re.error` itself, which accepts any object, and only the `decimal` module's own `str()` gives `"1"`. Other foreign objects already differed the same way; the checks only try `Decimal`.
+  - `compile`, `search` and `sub` with patterns such as `[[:alpha:]]`: CPython warns `FutureWarning: Possible nested set at position 1`, and the port never warns. The harness only started comparing warnings with #72. The port could raise them through `PyErr::warn`.
+- The gate table and figures below predate these changes. Rust mutation, fuzzing and benchmarks weren't re-run.
+
 ## Gates
 | Gate | Result | Detail |
 | --- | --- | --- |

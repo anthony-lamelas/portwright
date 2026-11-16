@@ -179,3 +179,22 @@ def test_sets_without_str_or_bytes_still_format(value):
     same(pc.format_value, format, value, "")
     same(pc.str_format, lambda t, a: t.format(*a), "{!r}", (value,))
     same(pc.percent_format, lambda t, v: t % v, "%s", (value,))
+
+
+NAN_SET_REFUSED = "pc_format doesn't support sets holding NaN with other items, whose order changes between processes"
+
+
+@pytest.mark.parametrize("value", [{float("nan"), float("nan")}, {1, 2, float("nan")}, frozenset({(float("nan"), 1), (1, 1)}),
+                                   {frozenset({float("nan")}), None}, [{0.5, -float("nan")}], {"k": frozenset({1, float("nan")})}])
+def test_sets_with_nan_and_other_items_are_refused(value):
+    """Open item P: a NaN's hash is its address, so its place in a set changed from run to run."""
+    for call in [lambda: pc.format_value(value, ""), lambda: pc.str_format("{}", (value,)),
+                 lambda: pc.percent_format("%s", (value,))]:
+        with pytest.raises(TypeError) as caught:
+            call()
+        assert str(caught.value) == NAN_SET_REFUSED
+
+
+@pytest.mark.parametrize("value", [{float("nan")}, frozenset({(float("nan"), 1)}), [float("nan"), 1.0], {"n": float("nan")}])
+def test_a_lone_nan_in_a_set_still_formats(value):
+    same(pc.format_value, format, value, "")

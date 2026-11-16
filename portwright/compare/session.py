@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import select
@@ -163,6 +164,49 @@ def find_difference(reference, candidate, path="outcome"):
     return None
 
 
+PROBE_TEXT_LIMIT = 100
+
+
+def _expressions(values) -> list[str]:
+    """The source of every ``PythonExpression`` among call arguments, in order."""
+    found = []
+
+    def walk(value):
+        if isinstance(value, wire.PythonExpression):
+            found.append(value.source)
+        elif type(value) in (list, tuple, set, frozenset):
+            for item in value:
+                walk(item)
+        elif type(value) is dict:
+            for key, item in value.items():
+                walk(key)
+                walk(item)
+    for value in values:
+        walk(value)
+    return found
+
+
+def probe_label(sources: list[str]) -> str:
+    """How a call's Python expressions appear in its difference signature.
+
+    An expression can probe anything, whatever API the call goes through: isodate's
+    checks sent ``inspect.isfunction(...)`` through ``ISO8601Error``, so its difference
+    took ``ISO8601Error``'s signature, and approving it would have hidden real
+    differences in that API's messages (open item U). Long expressions are cut and
+    tagged with a hash, so different ones never share a signature.
+    """
+    if not sources:
+        return ""
+    parts = []
+    for source in sources:
+        text = " ".join(source.split())
+        if len(text) > PROBE_TEXT_LIMIT:
+            digest = hashlib.sha256(source.encode("utf-8", "surrogatepass")).hexdigest()[:8]
+            text = f"{text[:PROBE_TEXT_LIMIT - 12]}...#{digest}"
+        parts.append(ascii(text)[1:-1])
+    return " <" + "; ".join(parts) + ">"
+
+
 def _short(value) -> str:
     text = json.dumps(value, ensure_ascii=True)
     return text if len(text) <= SUMMARY_LIMIT else text[:SUMMARY_LIMIT] + "..."
@@ -282,7 +326,9 @@ class Session:
     def _record_divergence(self, api, args, kwargs, left, right, difference) -> None:
         where, reference_value, candidate_value = difference
         shown_args = ", ".join([*map(ascii, args), *(f"{k}={v!a}" for k, v in kwargs.items())])
-        signature = f"{api} {where}"
+        # Calls with Python expressions get their own signature, so approving one
+        # never approves the API's other differences, or the other way round.
+        signature = f"{api}{probe_label(_expressions([*args, *kwargs.values()]))} {where}"
         entry = self.divergences.setdefault(signature, {"count": 0})
         entry["count"] += 1
         message = (

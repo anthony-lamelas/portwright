@@ -11,12 +11,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from portwright import resources
 from portwright.agents import AgentResult, AgentSession, Backend, LimitReached
 from portwright.evaluation import Project, Verification, add_regressions, differential_for, verify
 from portwright.gates import GateResult
 from portwright.gates.bench import load_benchmarks, performance_gate, run_benchmarks, run_native_benchmarks, speedups
-from portwright.gates.canaries import canary_gate, load_written_canaries
-from portwright.gates.coverage import coverage_gate, rust_coverage
+from portwright.gates.canaries import canary_gate, confirm_written_canaries, load_written_canaries
+from portwright.gates.coverage import coverage_gate, new_code_coverage, rust_coverage
 from portwright.gates.differential import self_comparison_gate
 from portwright.gates.fuzz import fuzz_gate
 from portwright.gates.integrity import hash_tree
@@ -24,6 +25,7 @@ from portwright.gates.license import is_permissive, license_files
 from portwright.gates.mutation import mutation_gate
 from portwright.gates.rust_quality import count_rust_lines, count_rust_lines_file
 from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
+from portwright.intake import write_build_time_files
 from portwright.manifest import extract_api
 from portwright.report import write_report
 from portwright.scaffold import crate_names, init_repo, write_scaffold
@@ -33,6 +35,18 @@ from portwright.scheduler import (
 from portwright.state import JsonStore, RunPaths, append_capped, atomic_write
 
 PHASES = ["intake", "checks", "design", "port", "harden", "fix_review", "cleanup", "performance", "final_review", "report"]
+
+
+def _ranges(lines: list[int]) -> str:
+    """``[1, 2, 3, 7]`` as ``1-3, 7``."""
+    spans: list[list[int]] = []
+    for line in lines:
+        if spans and line == spans[-1][1] + 1:
+            spans[-1][1] = line
+        else:
+            spans.append([line, line])
+    text = ", ".join(f"{a}-{b}" if a != b else f"{a}" for a, b in spans[:20])
+    return text + (", ..." if len(spans) > 20 else "")
 
 
 class RunStopped(RuntimeError):
@@ -85,6 +99,11 @@ class Config:
     # For ports of Python's built-ins: the PyO3 layer may only convert values and raise
     # exceptions, so it can't hand the work back to CPython.
     strict_bindings: bool = False
+    # A task whose new Rust the checks barely run did work no gate checked (#11). It is
+    # rejected when it adds at least this many instrumented lines and the checks run
+    # less than this share of them. 0 turns the check off.
+    task_coverage_minimum: float = 30.0
+    task_coverage_lines: int = 50
 
 
 class Porter:
@@ -137,10 +156,7 @@ class Porter:
         numbers there are no hints: listing every file as unrun made an agent rightly
         distrust the whole list.
         """
-        measured = self._record(rust_coverage(
-            self.paths.port, self.paths.checks, self.paths.upstream_src, self.config.module,
-            f"crates/{self.py_crate}", target_dir=self._target("coverage"),
-        ))
+        measured = self._record(self._rust_coverage())
         files = measured.details.get("files", [])
         if not files:
             return ""
@@ -205,6 +221,21 @@ class Porter:
     def _target(self, name: str) -> Path:
         return self.paths.build / "targets" / name
 
+    def _drop_target(self, name: str) -> None:
+        """Delete a Rust target folder nothing will build in again. Each is gigabytes,
+        and leaving them filled the disk on real runs (open item T)."""
+        resources.remove_tree(self._target(name))
+
+    def _rust_coverage(self) -> GateResult:
+        """Measure Rust coverage; the instrumented build is deleted afterward."""
+        try:
+            return rust_coverage(
+                self.paths.port, self.paths.checks, self.paths.upstream_src, self.config.module,
+                f"crates/{self.py_crate}", target_dir=self._target("coverage"),
+            )
+        finally:
+            self._drop_target("coverage")
+
     def _site(self, name: str) -> Path:
         return self.paths.build / "sites" / name
 
@@ -223,6 +254,8 @@ class Porter:
 
     def _agent(self, role: str, label: str, prompt: str, mounts: dict[str, str], apis=None) -> AgentResult:
         """Run a session, record its usage, and bring in the notes it left."""
+        # Stop before paying for a session whose work couldn't be built or gated.
+        resources.require_free_space(self.paths.root, f"a {role} session")
         number = self.run_state.update(lambda d: d.update(sessions=d["sessions"] + 1))["sessions"]
         scratch = self.paths.sessions / f"{number:03d}-{role}-{label}"
         out = scratch / "out"
@@ -328,6 +361,11 @@ class Porter:
         destination.parent.mkdir(parents=True, exist_ok=True)
         if package.is_dir():
             shutil.copytree(package, destination)
+            # Files the build writes, such as setuptools-scm's version.py, aren't in the clone (open item S).
+            generated = write_build_time_files(source, config.package_path, destination)
+            if generated:
+                self._log(f"  wrote {', '.join(generated)}, which the library's build generates")
+                self.run_state.update(lambda d: d.update(generated_files=generated))
         else:
             shutil.copyfile(package, destination)
         (upstream / "LICENSE").write_text(license_text, encoding="utf-8")
@@ -349,12 +387,32 @@ class Porter:
             shutil.rmtree(written)
         if config.canaries_path:
             shutil.copytree(source / config.canaries_path, written)
+            self._confirm_canaries()
         if not self.paths.port.exists() or not (self.paths.port / ".git").exists():
             write_scaffold(self.paths.port, config.lib, config.module, license_text, config.url, commit)
             self._vendor_crates()
             init_repo(self.paths.port)
         self.run_state.update(lambda d: d.update(commit=commit, holdout_count=len(holdouts)))
         self._log(f"  {len(api)} public APIs, {len(holdouts)} tests held back, commit {commit[:9]}")
+
+    def _written_canaries(self):
+        return load_written_canaries(self.paths.control / "canaries", f"{Path(self.config.package_path).name}/__init__.py")
+
+    def _confirm_canaries(self) -> None:
+        """Before any checks exist, find which hand-written planted bugs change an
+        upstream test's result. A miss on one that changes none may be a no-op bug, not
+        a blind spot, so the canary gate lists it apart (open item C)."""
+        found = confirm_written_canaries(self.paths.tests_full, self.paths.upstream_src, self.config.module, self._written_canaries())
+        atomic_write(self.paths.control / "canary_confirmation.json", json.dumps(found, indent=1))
+        total = len(found["confirmed"]) + len(found["unconfirmed"])
+        summary = f"{len(found['confirmed'])}/{total} hand-written planted bugs change an upstream test's result"
+        if found["unconfirmed"]:
+            summary += f"; no upstream test notices {', '.join(found['unconfirmed'][:10])}, so each may change nothing"
+        self._record(GateResult("canary_confirmation", True, summary, found))
+
+    def _unconfirmed_canaries(self) -> set[str]:
+        path = self.paths.control / "canary_confirmation.json"
+        return set(json.loads(path.read_text())["unconfirmed"]) if path.exists() else set()
 
     def _vendor_crates(self) -> None:
         """Copy finished crates into vendor/ and freeze them. Cargo makes a path
@@ -455,9 +513,8 @@ class Porter:
                 self.paths.checks, self.paths.upstream_src, config.module,
                 minimum=config.canary_minimum, sample=config.canary_sample, seed=config.seed,
                 max_examples=config.canary_examples, workers=8,
-                written=load_written_canaries(
-                    self.paths.control / "canaries", f"{Path(config.package_path).name}/__init__.py"
-                ) if config.canaries_path else None,
+                written=self._written_canaries() if config.canaries_path else None,
+                unconfirmed=self._unconfirmed_canaries(),
             )
         )
         feedback = []
@@ -478,16 +535,100 @@ class Porter:
         return all(g.passed for g in (self_check, coverage, canaries)), "\n\n".join(feedback)
 
     def _broken_benchmarks(self) -> dict:
-        benchmarks = load_benchmarks(self.paths.checks)
+        try:
+            benchmarks = load_benchmarks(self.paths.checks)
+        except ValueError as error:
+            return {"benchmarks.json": f"isn't valid JSON: {error}"}
         if not benchmarks:
             return {}
         results = run_benchmarks(self.reference, benchmarks, samples=1)
         return {name: result.get("message") or result.get("kind") for name, result in results.items() if result.get("kind") != "benchmark"}
 
+    def _repair_benchmarks(self, broken: dict) -> None:
+        """Give the test writer a short round for benchmarks that raise on the original.
+
+        The warning about them (#30) reached the test writer only in a later checks
+        round, and checks that pass the first time get none, so a broken benchmark
+        reached the performance phase (open item L). Only benchmarks.json may change in
+        this round. Any benchmark still broken afterward is dropped, since it measures
+        nothing.
+        """
+        before = self.paths.build / "checks-before" / "benchmarks"
+        if before.exists():
+            shutil.rmtree(before)
+        shutil.copytree(self.paths.checks, before)
+        self._agent(
+            "test_writer", "benchmarks",
+            "Stage: benchmarks. Your checks passed. These benchmarks in /work/checks/benchmarks.json raise on the "
+            "original, so they measure nothing. Fix their arguments, or replace them with benchmarks of the same "
+            "APIs that run (JSON has no tuples: a list is passed as a list). Change only benchmarks.json; other "
+            "changes are discarded.\n" + json.dumps(broken, indent=1)[:3000],
+            self._test_writer_mounts(),
+        )
+        written = self.paths.checks / "benchmarks.json"
+        new = written.read_bytes() if written.exists() else None
+        shutil.rmtree(self.paths.checks)
+        shutil.copytree(before, self.paths.checks)
+        if new is not None:
+            written.write_bytes(new)
+        still = self._broken_benchmarks()
+        if "benchmarks.json" in still:  # the round broke the file itself: keep the old one
+            shutil.copyfile(before / "benchmarks.json", written)
+            still = self._broken_benchmarks()
+        if still:
+            kept = [bench for bench in load_benchmarks(self.paths.checks) if bench.get("name") not in still]
+            atomic_write(written, json.dumps(kept, indent=1))
+        summary = f"{len(broken)} benchmarks raised on the original; {len(broken) - len(still)} fixed"
+        if still:
+            summary += f", {len(still)} dropped ({', '.join(sorted(still))})"
+        self._record(GateResult("benchmarks", True, summary, {"broken": broken, "dropped": still}))
+
     def _test_writer_mounts(self, *extra: tuple[str, str]) -> dict[str, str]:
         return {str(self.paths.checks): "/work/checks", **dict(extra)}
 
+    def _review_domain(self) -> None:
+        """For a shim over Python's built-ins, have a reviewer list inputs that reach
+        behavior outside the built-in each function names, before anything is written.
+
+        Each such gap used to surface late: Decimal arguments in the port phase, format
+        fields reaching attributes after review, each costing a debugger round or a
+        restart (open item I). Gaps stop the run here, before checks or Rust exist, so a
+        person can tighten the shim or accept them.
+        """
+        state = self.run_state.read()
+        if not self.config.strict_bindings or state.get("domain_review_accepted"):
+            return
+        result = self._agent(
+            "domain_reviewer", "domain",
+            f"Review the domain of the shim `{self.config.module}` in /work/upstream/src. Public API:\n"
+            + "\n".join(self.api),
+            {},
+        )
+        produced = sorted(self.paths.sessions.glob("*-domain_reviewer-domain/out/domain.json"))
+        try:
+            leaks = json.loads(produced[-1].read_text())["leaks"] if produced else None
+        except (ValueError, KeyError, TypeError):
+            leaks = None
+        notes = sorted(self.paths.sessions.glob("*-domain_reviewer-domain/out/domain.md"))
+        if notes:
+            atomic_write(self.paths.control / "domain_review.md", notes[-1].read_text(encoding="utf-8"))
+        if not isinstance(leaks, list):
+            self._record(GateResult("domain_review", False, f"the review didn't write a usable domain.json ({result.status}); not judged", {}))
+            return
+        atomic_write(self.paths.control / "domain_review.json", json.dumps(leaks, indent=1))
+        if not leaks:
+            self._record(GateResult("domain_review", True, "the reviewer found no input that reaches behavior outside the built-ins", {}))
+            return
+        names = sorted({str(leak.get("api", "?")) for leak in leaks if isinstance(leak, dict)})
+        self._record(GateResult("domain_review", False, f"{len(leaks)} inputs reach behavior outside the built-ins, in {', '.join(names[:12])}", {"leaks": leaks}))
+        raise RunStopped(
+            f"the shim's domain has {len(leaks)} gaps a person should close before porting; see "
+            f"{self.paths.control / 'domain_review.md'}. Fix the shim and run again with --redo intake, or accept them "
+            f"with `python -m portwright.cli approve --run-dir {self.config.run_dir} --domain` and run again with --redo checks."
+        )
+
     def _phase_checks(self) -> None:
+        self._review_domain()
         config = self.config
         api_list = "\n".join(self.api)
         feedback = ""
@@ -503,6 +644,9 @@ class Porter:
             self._agent("test_writer", f"checks{round_number}", prompt, self._test_writer_mounts())
             passed, feedback = self._judge_checks()
             if passed:
+                broken = self._broken_benchmarks()
+                if broken:
+                    self._repair_benchmarks(broken)
                 break
         add_regressions(self.paths.checks, {})
         self._lock_checks()
@@ -586,7 +730,9 @@ class Porter:
             self.run_state.update(lambda d: d.update(shared={
                 **{k: v for k, v in d["shared"].items() if k.startswith("vendor/")}, **shared}))
             self.workspaces.discard(name)
+            self._drop_target(name)
             return
+        self._drop_target(name)
         raise RunStopped(f"no valid plan after {self.config.design_rounds + 1} attempts: {feedback[:500]}")
 
     # ---------------------------------------------------------------- 4. port
@@ -648,13 +794,56 @@ class Porter:
                 if item.name == "differential" and not item.passed:
                     add_regressions_later = item.details.get("divergences", {})
                     self._pending_regressions(add_regressions_later)
-            return verdict.passed, verdict.for_agent()
+            if not verdict.passed:
+                return False, verdict.for_agent()
+            return self._task_coverage(task_id, path)
         merged = self.workspaces.merge(task_id, workspace, gate)
         if merged.merged:
             self._log(f"  merged {task_id}")
             self.workspaces.discard(task_id)
-            shutil.rmtree(self._target(task_id), ignore_errors=True)
+            self._drop_target(task_id)
         return merged
+
+    def _task_coverage(self, task_id: str, path: Path) -> tuple[bool, str]:
+        """Measure how much of the task's new Rust the checks run, before it merges.
+
+        The planner rule against infrastructure-only tasks (#11) was only a prompt: code
+        couldn't tell whether a task's work was checked. A porter that builds machinery its
+        own APIs never use (a comparison tool, a "foundation" layer) adds Rust no check
+        runs. That shows here as new lines with zero hits (open item A).
+        """
+        config = self.config
+        if config.task_coverage_minimum <= 0:
+            return True, ""
+        added = self.workspaces.added_lines(path)
+        if sum(len(lines) for lines in added.values()) < config.task_coverage_lines:
+            return True, ""
+        label = f"{task_id}-coverage"
+        try:
+            measured = rust_coverage(
+                path, self.paths.checks, self.paths.upstream_src, config.module, f"crates/{self.py_crate}",
+                target_dir=self._target(label), per_line=True,
+            )
+        finally:
+            self._drop_target(label)
+        if "line_hits" not in measured.details:
+            self._log(f"  {task_id}: couldn't measure the coverage of its new code; not judged ({measured.summary})")
+            return True, ""
+        found = new_code_coverage(added, measured.details["line_hits"])
+        summary = f"the checks run {found['run']}/{found['lines']} ({found['percent']:.0f}%) of the new Rust lines"
+        self.board.note(task_id, new_code_coverage={k: found[k] for k in ("lines", "run", "percent")})
+        self._log(f"  {task_id}: {summary}")
+        if found["lines"] < config.task_coverage_lines or found["percent"] >= config.task_coverage_minimum:
+            return True, ""
+        unrun = "\n".join(
+            f"- {name}: lines {_ranges(lines)}" for name, lines in sorted(found["unrun"].items(), key=lambda kv: -len(kv[1]))[:15]
+        )
+        return False, (
+            f"[FAIL] task_coverage: {summary}, below the {config.task_coverage_minimum:.0f}% minimum. Code the checks "
+            "never run is unchecked: no gate can tell whether it is right. Implement your APIs through code they "
+            "call, and delete code nothing calls, such as helpers or tools of your own. If an API really needs "
+            "this code and the checks can't reach it, explain why in /work/out/tried.md.\nNew lines never run:\n" + unrun
+        )
 
     def _regate_after_ruling(self, task_id: str, task: dict) -> MergeResult | None:
         """After a person approves a difference, a crate or a frozen-file change, the
@@ -678,6 +867,7 @@ class Porter:
             # The next session should see the current failure, or the conflict markers it left.
             task = {**task, "failure": regated.detail}
         if task["attempts"] >= self.config.max_attempts:
+            self._drop_target(task_id)  # its worktree stays, in case a person reopens it
             return BLOCKED, f"gave up after {task['attempts']} attempts: {task['failure'][-1500:]}"
         role = "debugger" if task["attempts"] >= self.config.debugger_after else "porter"
         workspace = self.workspaces.create(task_id)
@@ -696,6 +886,7 @@ class Porter:
         if merged.reason == "gate" and self._shared_change_attempts(task_id) >= 2:
             # Two attempts agree the fix needs a frozen file changed. More porting
             # can't get past that, and only a person can grant it.
+            self._drop_target(task_id)
             return BLOCKED, f"needs a change to frozen shared code, requested in two attempts:\n{text}\n{notes}"
         if merged.reason == "conflict":
             return CONFLICT, f"{merged.detail}\nYour work itself wasn't rejected.\n{notes}"
@@ -750,7 +941,7 @@ class Porter:
         for task_id in recover_landed(self.board, self.workspaces):
             self._log(f"  {task_id} had merged before the last stop; marked merged without running it again")
             self.workspaces.discard(task_id)
-            shutil.rmtree(self._target(task_id), ignore_errors=True)
+            self._drop_target(task_id)
         run_board(self.board, self._work_task, max_agents=self.config.max_agents, on_error=lambda t, e: self._log(f"  harness error in {t}: {e}"))
         self._flush_regressions()
         unfinished = self.board.unfinished()
@@ -811,7 +1002,7 @@ class Porter:
                 else:  # a conflict can't be built on, so start again from main
                     carried = None
             self.workspaces.discard(task)
-            shutil.rmtree(self._target(task), ignore_errors=True)
+            resources.remove_tree(self._target(task))
             verdict = check()
         if not verdict.passed:
             raise RunStopped(f"{name} still failing after {self.config.fix_rounds} rounds: {verdict.for_agent()[:1500]}")
@@ -878,23 +1069,27 @@ class Porter:
                 self.workspaces.commit(workspace, f"debugger: {task}")
                 self.workspaces.merge(task, workspace, lambda path: self._gate_full(path, task))
                 self.workspaces.discard(task)
+                self._drop_target(task)
                 continue
-            mutation = self._record(
-                mutation_gate(
-                    self.paths.port, self.paths.checks, self.reference, f"crates/{self.py_crate}", self.paths.build / "mutation",
-                    sample=config.mutation_sample, minimum=config.mutation_minimum, seed=seed, target_dir=self._target("mutation"),
-                    approved=self.run_state.read()["approved_differences"],
+            try:
+                mutation = self._record(
+                    mutation_gate(
+                        self.paths.port, self.paths.checks, self.reference, f"crates/{self.py_crate}", self.paths.build / "mutation",
+                        sample=config.mutation_sample, minimum=config.mutation_minimum, seed=seed, target_dir=self._target("mutation"),
+                        approved=self.run_state.read()["approved_differences"],
+                    )
                 )
-            )
+            finally:
+                # Three source copies and three Rust targets, one per worker.
+                resources.remove_tree(self.paths.build / "mutation")
+                self._drop_target("mutation")
             missed = mutation.details.get("missed", [])
             if missed and cycle < config.harden_cycles:
                 self._strengthen(missed)
                 continue
             break
         self._record(self._holdout_gate(), "holdout_tests")
-        self._record(
-            rust_coverage(self.paths.port, self.paths.checks, self.paths.upstream_src, config.module, f"crates/{self.py_crate}", target_dir=self._target("coverage"))
-        )
+        self._record(self._rust_coverage())
         self._review("harden")
 
     def _holdout_gate(self) -> GateResult:
@@ -969,6 +1164,7 @@ class Porter:
         self._agent(role, task, prompt, self._port_mounts(workspace, task))
         if not self.workspaces.commit(workspace, f"{role}: {task}") and not self.workspaces.changed_since_branch(workspace):
             self.workspaces.discard(task)
+            self._drop_target(task)
             return GateResult(role, False, "the agent changed nothing", {})
         outcome: dict = {}
 
@@ -988,7 +1184,7 @@ class Porter:
         if not merged.merged:
             self.run_state.update(lambda d: d["rejected"].append({"task": task, "reason": result.summary}))
         self.workspaces.discard(task)
-        shutil.rmtree(self._target(task), ignore_errors=True)
+        self._drop_target(task)
         return result
 
     def _unfreeze_shared_code(self) -> None:
@@ -1092,7 +1288,10 @@ class Porter:
     def _fuzz(self) -> GateResult:
         """Fuzz main, and remember which commit that covered."""
         head = self.workspaces.head()
-        result = self._record(fuzz_gate(self.paths.port, seconds_per_target=self.config.fuzz_seconds, target_dir=self._target("fuzz")))
+        try:
+            result = self._record(fuzz_gate(self.paths.port, seconds_per_target=self.config.fuzz_seconds, target_dir=self._target("fuzz")))
+        finally:
+            self._drop_target("fuzz")
         self.run_state.update(lambda d: d.update(fuzzed_commit=head))
         return result
 

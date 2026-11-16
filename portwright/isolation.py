@@ -22,13 +22,13 @@ import tempfile
 import uuid
 from pathlib import Path
 
+from portwright import resources
 from portwright.toolchain import IMAGE, in_sandbox
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CONTAINER_PYTHON = "python3"
 # Settings that reach the processes inside. Everything else in the host environment stays out.
 PASSED_ENV_PREFIXES = ("PORTWRIGHT_WORKER_",)
-MEMORY_LIMIT = os.environ.get("PORTWRIGHT_GATE_MEMORY", "6g")
 KILL_GRACE_SECONDS = 10
 TIMEOUT_EXIT = 124  # coreutils timeout
 
@@ -85,15 +85,17 @@ def run(
     the command gets, apart from a few worker settings.
     """
     env = dict(env or {})
+    resources.require_free_space(cwd, "a gate run")
     if not enabled():
         return subprocess.run(
             command, cwd=cwd, env={**os.environ, **env}, capture_output=True, text=True,
             timeout=timeout, check=False,
         )
     name = f"portwright-gate-{uuid.uuid4().hex[:12]}"
+    memory = resources.gate_memory_limit()
     docker = [
         "docker", "run", "--rm", "--name", name, "--label", "portwright.gate=1",
-        "--network", "none", "--memory", MEMORY_LIMIT,
+        "--network", "none", "--memory", memory, "--memory-swap", memory,
         "--user", f"{os.getuid()}:{os.getgid()}",
         "-e", "HOME=/tmp", "-e", "PORTER_IN_SANDBOX=1",
         "-w", str(Path(cwd).resolve()),
@@ -111,8 +113,11 @@ def run(
     mounts.setdefault(REPO_ROOT, "ro")
     for path, mode in mounts.items():
         docker += _mount(path, mode)
-    # The timeout runs inside the container, so a killed orchestrator can't leave one behind.
-    inner = ["timeout", "-k", str(KILL_GRACE_SECONDS), str(int(timeout)), *command]
+    heartbeat_mount, heartbeat = resources.watchdog_mounts()
+    docker += heartbeat_mount
+    # The timeout runs inside the container, so a killed orchestrator can't leave one
+    # behind for long; the watchdog ends it sooner, once the heartbeat stops.
+    inner = resources.watched(["timeout", "-k", str(KILL_GRACE_SECONDS), str(int(timeout)), *command], heartbeat)
     try:
         done = subprocess.run(
             [*docker, IMAGE, *inner], capture_output=True, text=True,

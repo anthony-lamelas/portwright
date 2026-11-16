@@ -99,6 +99,10 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
     if getattr(config, "canaries_path", None):
         parts.append("**Hand-written planted bugs** (the original's logic is C, so there was no Python to plant bugs in):\n"
                      + _list_or_none([item["bug"] for item in canaries.get("missed", [])]))
+        if canaries.get("missed_unconfirmed"):
+            parts.append("**Also missed, and no upstream test notices them either** (each is a bug that changes nothing, "
+                         "or a blind spot the checks share with the upstream tests; not counted in the score):\n"
+                         + _list_or_none([item["bug"] for item in canaries["missed_unconfirmed"]]))
     else:
         parts.append("**In copies of the Python:**\n" + _list_or_none(
             [f"`{item['file']}:{item['line']}`: {item['bug']}" for item in canaries.get("missed", [])]))
@@ -122,6 +126,17 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
     if rulings.exists() and rulings.read_text(encoding="utf-8").strip():
         parts.append("## Rulings by a person\nAgents had to follow these. Some accept differences that the list above doesn't show.\n\n"
                      + rulings.read_text(encoding="utf-8").strip())
+    domain = paths.control / "domain_review.json"
+    if domain.exists() and state.get("domain_review_accepted"):
+        try:
+            leaks = json.loads(domain.read_text())
+        except ValueError:
+            leaks = []
+        if leaks:
+            parts.append("## Shim domain gaps a person accepted\nA reviewer found these inputs reach behavior outside the "
+                         "built-ins before the checks were written, and a person let the run go on with them:\n\n"
+                         + _list_or_none([f"`{leak.get('api')}` with `{leak.get('input')}`: {leak.get('reaches')}"
+                                          for leak in leaks if isinstance(leak, dict)]))
     proposals = sorted((paths.control / "differences").glob("*.json")) if (paths.control / "differences").is_dir() else []
     entries = []
     for item in proposals:

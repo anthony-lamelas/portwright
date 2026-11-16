@@ -12,6 +12,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 pc-re-port-core = { path = "../pc-re-port-core" }
-pyo3 = { version = "0.29", features = ["extension-module", "num-bigint", "rust_decimal"] }
+pyo3 = { version = "0.29", features = ["extension-module", "num-bigint"] }
 num-bigint = "0.4"
-rust_decimal = "1"

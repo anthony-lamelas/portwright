@@ -267,7 +267,11 @@ def datetime_str(d): return str(_dt_in(d))
 @_builtins_only
 def datetime_repr(d): return repr(_dt_in(d))
 @_builtins_only
-def timezone_name(utcoffset): return _tz(utcoffset).tzname(None)
+def timezone_name(utcoffset):
+    # None would reach None.tzname and raise Python's own AttributeError text.
+    if utcoffset is None:
+        raise TypeError("timezone_name needs a UTC offset in seconds, not None")
+    return _tz(utcoffset).tzname(None)
 
 
 @_builtins_only

@@ -18,6 +18,8 @@ import uuid
 from pathlib import Path
 import platform
 
+from portwright import resources
+
 IMAGE = "portwright-toolchain:dev"
 REPO_ROOT = Path(__file__).resolve().parents[1]
 # Where the image's cargo (CARGO_HOME=/opt/cargo) keeps downloaded crates. The image
@@ -26,6 +28,9 @@ CONTAINER_CARGO_CACHE = {"registry": "/opt/cargo/registry", "git": "/opt/cargo/g
 # Copied into the fetch step's staging folder without these: a workspace's own cargo
 # config or toolchain file could run a program the agent wrote, with network.
 FETCH_IGNORES = ("target", ".git", ".cargo", "rust-toolchain", "rust-toolchain.toml")
+# Where a build container sees the orchestrator's heartbeat folder and the watchdog script.
+HEARTBEAT_MOUNT = "/portwright-heartbeat"
+WATCHDOG_MOUNT = "/portwright-watchdog.py"
 # The toolchain each separate cargo workspace builds with. cargo-fuzz needs nightly.
 FETCH_TOOLCHAINS = {"Cargo.toml": "stable", "fuzz/Cargo.toml": "nightly"}
 
@@ -109,14 +114,19 @@ def run_in_toolchain(
         # Some Docker installs can't see host temporary directories, and mount an empty
         # folder without any error. Refusing here is clearer than "file not found" later.
         raise ValueError(f"workspace must not be in a temporary directory: {workspace}")
+    resources.require_free_space(target_dir or workspace, f"a build ({' '.join(command[:3])})")
     if not network and fetch:
         manifests = ("Cargo.toml",) if fetch is True else tuple(fetch)
         fetched = fetch_dependencies(workspace, manifests, timeout=timeout, image=image)
         if fetched.returncode != 0:
             return fetched
+    # Builds run agent code (build scripts, proc macros, tests) and can use a lot of
+    # memory, so they get the same limit as every other gate container (open item E).
+    memory = resources.gate_memory_limit()
     docker = [
         "docker", "run", "--rm",
         "--user", f"{os.getuid()}:{os.getgid()}",
+        "--memory", memory, "--memory-swap", memory,
         "-e", "HOME=/tmp",
         "-e", "CARGO_TARGET_DIR=/work/target",
         "-v", f"{workspace}:/work{':ro' if read_only else ''}",
@@ -140,9 +150,19 @@ def run_in_toolchain(
         docker += ["--network", "none", "-e", "CARGO_NET_OFFLINE=true"]
     for host_path, container_path in (extra_mounts or {}).items():
         docker += ["-v", f"{Path(host_path).resolve()}:{container_path}"]
-    return subprocess.run(
-        [*docker, image, *command], capture_output=True, text=True, timeout=timeout, check=False
-    )
+    heartbeat_mount, heartbeat = resources.watchdog_mounts(HEARTBEAT_MOUNT)
+    if heartbeat:
+        docker += [*heartbeat_mount, "-v", f"{resources.WATCHDOG_SCRIPT}:{WATCHDOG_MOUNT}:ro"]
+    name = f"portwright-build-{uuid.uuid4().hex[:12]}"
+    docker += ["--name", name, "--label", "portwright.gate=1"]
+    command = resources.watched(command, heartbeat, WATCHDOG_MOUNT)
+    try:
+        return subprocess.run(
+            [*docker, image, *command], capture_output=True, text=True, timeout=timeout, check=False
+        )
+    except subprocess.TimeoutExpired:
+        subprocess.run(["docker", "kill", name], capture_output=True, check=False)
+        raise
 
 
 _fetch_lock = threading.Lock()

@@ -64,6 +64,21 @@ def hex_in_repr():
 
 def real_address():
     return object()
+
+def future_warning():
+    import warnings
+    warnings.warn("Possible nested set at position 1", FutureWarning)
+    return 1
+
+def warning_text():
+    import warnings
+    warnings.warn("first", UserWarning)
+    return 1
+
+def hidden_deprecation():
+    import warnings
+    warnings.warn("datetime.utcnow() is deprecated", DeprecationWarning)
+    return 1
 '''
 
 CANDIDATE = REFERENCE.replace(
@@ -85,6 +100,12 @@ CANDIDATE = REFERENCE.replace(
     'return struct_nan(0x7FF8000000000000)', 'return struct_nan(0x7FF8000000000001)'
 ).replace(
     'Pat("0x1f")', 'Pat("0xDEAD")'
+).replace(
+    '    warnings.warn("Possible nested set at position 1", FutureWarning)\n', ''
+).replace(
+    'warnings.warn("first", UserWarning)', 'warnings.warn("second", UserWarning)'
+).replace(
+    '    warnings.warn("datetime.utcnow() is deprecated", DeprecationWarning)\n', ''
 )
 
 CHECKS = '''
@@ -92,7 +113,8 @@ from portwright.compare import same
 
 def test_outcomes():
     for name in ["homemade_error", "error_position", "stored_vs_getter", "unreadable_attribute",
-                 "attribute_lookup", "nan_sign", "nan_payload", "hex_in_repr", "real_address"]:
+                 "attribute_lookup", "nan_sign", "nan_payload", "hex_in_repr", "real_address",
+                 "future_warning", "warning_text", "hidden_deprecation"]:
         same(name)
 '''
 
@@ -116,7 +138,7 @@ def divergences(tmp_path_factory):
     )
     result = differential_for(project, sides["port"]["path"], max_examples=1)
     assert not result.details["divergences"], result.details["divergences"]
-    assert result.details["calls"] == 9, result.summary
+    assert result.details["calls"] == 12, result.summary
     return set(result.details["approved_seen"])
 
 
@@ -126,6 +148,9 @@ EXPECTED = {
     "nan_sign": "outcome.value.v",
     "nan_payload": "outcome.value.v",
     "hex_in_repr": "outcome.value.repr",
+    # Open item G: a port that never warned used to match.
+    "future_warning": "outcome.warnings.length",
+    "warning_text": "outcome.warnings[0].message",
 }
 
 
@@ -136,8 +161,9 @@ def test_a_hidden_difference_is_found(divergences, api):
 
 def test_equal_outcomes_still_match(divergences):
     """A getter matches a stored attribute, unreadable and cyclic attributes don't
-    crash the worker, an explicit AttributeError matches a failed lookup, and real
-    addresses are still masked."""
+    crash the worker, an explicit AttributeError matches a failed lookup, real
+    addresses are still masked, and warnings Python hides by default, such as the
+    DeprecationWarning the standard library raises inside a library, aren't compared."""
     assert {signature.split()[0] for signature in divergences} == set(EXPECTED)
 
 

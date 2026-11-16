@@ -10,10 +10,12 @@ import pytest
 from fake_agents import (
     ALL_APIS,
     FakeAgents,
+    broken_benchmark_first,
     broken_port,
     cheat_import_original,
     limit_once,
     needs_shared_change,
+    porter_builds_its_own_tool,
     regressing_cleanup,
     weak_checks_only,
 )
@@ -80,6 +82,9 @@ def test_full_run_with_a_good_port_reaches_a_pass(source):
     roles = {call.split(":")[0] for call in agents.calls}
     assert {"test_writer", "planner", "porter", "reviewer", "cleanup", "performance"} <= roles
     assert (Path(config.run_dir) / "port" / "LICENSE.upstream").exists()
+    # Rust targets nothing will build in again are deleted; they filled disks (open item T).
+    assert sorted(path.name for path in (Path(config.run_dir) / "build" / "targets").iterdir()) == ["main"]
+    assert not (Path(config.run_dir) / "build" / "mutation").exists()
 
 
 def test_rerunning_a_finished_run_does_nothing(source):
@@ -224,3 +229,52 @@ def test_invalid_plan_is_rejected(source):
     state = Porter(make_config(source, "badplan", design_rounds=1), agents).run()
     assert "no valid plan" in state["stopped"]
     assert not any(call.startswith("porter") for call in agents.calls)
+
+
+def test_a_task_whose_new_rust_the_checks_never_run_is_rejected(source):
+    """The planner rule against infrastructure tasks (#11) was only a prompt (open item A)."""
+    agents = FakeAgents(behaviors={"porter": porter_builds_its_own_tool})
+    config = make_config(source, "task-coverage", fuzz_seconds=1)
+    state = Porter(config, agents).run()
+    assert state["stopped"] is None, state["stopped"]
+    porters = [prompt for call, prompt in zip(agents.calls, agents.prompts) if call.startswith("porter")]
+    assert len(porters) == 2
+    assert "task_coverage" in porters[1] and "compare_tool.rs" in porters[1], porters[1][-3000:]
+    board = json.loads((Path(config.run_dir) / "control" / "board.json").read_text())
+    measured = board["tasks"]["everything"]["new_code_coverage"]
+    assert measured["percent"] >= 30, measured
+
+
+def test_broken_benchmarks_get_a_round_even_when_the_checks_pass(source):
+    """A benchmark that raised on the original reached the performance phase (open item L)."""
+    agents = FakeAgents(behaviors={"test_writer": broken_benchmark_first})
+    config = make_config(source, "benchmarks", fuzz_seconds=1)
+    porter = Porter(config, agents)
+    porter._phase_intake()
+    porter._phase_checks()
+    assert any(call.startswith("test_writer:") and call.endswith("benchmarks") for call in agents.calls), agents.calls
+    state = porter.run_state.read()
+    assert state["gates"]["benchmarks"]["summary"] == "1 benchmarks raised on the original; 1 fixed"
+    names = [bench["name"] for bench in json.loads((porter.paths.checks / "benchmarks.json").read_text())]
+    assert names == ["slug", "digits"]
+    assert not (porter.paths.checks / "test_sneaky.py").exists()  # only benchmarks.json may change
+
+
+def test_a_shims_domain_gaps_stop_the_run_before_any_checks(source):
+    """Domain gaps surfaced late, each costing a debugger round or a restart (open item I)."""
+    from portwright.cli import main as cli
+
+    agents = FakeAgents()
+    agents.domain_leaks = [{"api": "slug", "input": "slug(Decimal('1'))", "reaches": "Decimal.__str__", "suggestion": "refuse"}]
+    config = make_config(source, "domain", strict_bindings=True)
+    porter = Porter(config, agents)
+    porter._phase_intake()
+    with pytest.raises(Exception) as stopped:
+        porter._phase_checks()
+    assert "domain has 1 gaps" in str(stopped.value) and "--domain" in str(stopped.value)
+    assert not any(call.startswith("test_writer") for call in agents.calls)
+    assert "1 gaps" in (porter.paths.control / "domain_review.md").read_text()
+    assert cli(["approve", "--run-dir", str(config.run_dir), "--domain"]) == 0
+    porter._phase_checks()  # accepted: no second review, and the checks go ahead
+    assert sum(call.startswith("domain_reviewer") for call in agents.calls) == 1
+    assert any(call.startswith("test_writer") for call in agents.calls)

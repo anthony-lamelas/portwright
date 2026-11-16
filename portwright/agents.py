@@ -13,7 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
 
+from portwright import resources
 from portwright.auth import Auth
+from portwright.limits import LimitReached  # noqa: F401 - re-exported; callers import it from here
 from portwright.toolchain import IMAGE
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -21,10 +23,6 @@ PROMPTS = REPO_ROOT / "prompts"
 SKILLS = REPO_ROOT / "skills"
 _LIMIT_TEXT = re.compile(r"usage limit|limit reached|hit your .*limit|rate.?limit|too many requests|overloaded|out of extra usage", re.I)
 _AUTH_TEXT = re.compile(r"not logged in|invalid api key|authentication_error|failed to authenticate|oauth token .*(expired|revoked)|please run /login", re.I)
-
-
-class LimitReached(RuntimeError):
-    """A usage limit was hit. Progress is saved, and the run can resume later."""
 
 
 def encodable(text: str) -> str:
@@ -97,20 +95,19 @@ def parse_result(stdout: str, returncode: int) -> AgentResult:
     return AgentResult("ok", text, usage)
 
 
-AGENTS_MEMORY_SHARE = 0.6  # all agent containers together; the rest is for the host's gate runs
 LABEL = "portwright.run"
+# Where the heartbeat folder is mounted in agent containers (see resources.Heartbeat).
+HEARTBEAT_MOUNT = "/heartbeat"
 
 
 def memory_limit(share: float = 0.3, ceiling_gb: int = 16) -> str:
     """Memory for one agent container: a share of this machine's RAM, so the agents
     plus the host's own gate runs can't exhaust it. A fixed 16g did nothing on a 15 GB
     machine: an agent's scratch script reached 13 GB and starved the whole host."""
-    try:
-        with open("/proc/meminfo") as meminfo:
-            total_kb = next(int(line.split()[1]) for line in meminfo if line.startswith("MemTotal:"))
-    except (OSError, StopIteration, ValueError):
+    total_mb = resources.total_memory_mb()
+    if total_mb is None:
         return f"{ceiling_gb}g"
-    return f"{max(2048, min(ceiling_gb * 1024, int(total_kb / 1024 * share)))}m"
+    return f"{max(2048, min(ceiling_gb * 1024, int(total_mb * share)))}m"
 
 
 def stop_container(name: str) -> None:
@@ -132,14 +129,18 @@ class DockerClaude:
 
     def __init__(
         self, proxy_socket: str | Path, auth: Auth, *, image: str = IMAGE, cargo_cache: str | Path | None = None,
-        run_label: str = "", max_agents: int = 1,
+        run_label: str = "", max_agents: int = 1, budget: resources.AgentBudget | None = None, log=None,
     ):
         self.proxy_socket = Path(proxy_socket).resolve()
         self.auth = auth
         self.image = image
         self.cargo_cache = Path(cargo_cache).resolve() if cargo_cache else None
         self.run_label = run_label
-        self.memory = memory_limit(share=min(0.3, AGENTS_MEMORY_SHARE / max(1, max_agents)))
+        self.memory = memory_limit(share=min(0.3, resources.AGENTS_MEMORY_SHARE / max(1, max_agents)))
+        # Shared with every other run on this machine, so two runs can't each give
+        # their agents 60% of RAM (open item H).
+        self.budget = budget if budget is not None else resources.AgentBudget()
+        self.log = log or (lambda message: print(message, flush=True))
 
     def stop_leftovers(self, sessions_dir: str | Path | None = None) -> int:
         """Stop this run's containers and delete token copies a killed run left behind.
@@ -192,6 +193,8 @@ class DockerClaude:
             docker += ["-e", f"{key}={value}"]
         for host_path, container_path in session.mounts.items():
             docker += ["-v", f"{Path(host_path).resolve()}:{container_path}"]
+        heartbeat_mount, heartbeat = resources.watchdog_mounts(HEARTBEAT_MOUNT)
+        docker += heartbeat_mount
         claude = [
             "claude", "-p", "--output-format", "json",
             "--permission-mode", "bypassPermissions",
@@ -205,7 +208,12 @@ class DockerClaude:
         # The container ends itself after the session's time limit, even if the
         # orchestrator that would have stopped it was killed.
         limit = int(session.timeout) + 120
-        script = f"python3 /harness/portwright/sandbox_forward.py & exec timeout -k 30 {limit} " + " ".join(claude)
+        script = "python3 /harness/portwright/sandbox_forward.py & "
+        if heartbeat:
+            # Ends the container within minutes if the orchestrator dies, even by SIGKILL,
+            # instead of at the time limit above (open item D).
+            script += f"python3 /harness/portwright/sandbox_watchdog.py {heartbeat} {resources.heartbeat_max_age()} & "
+        script += f"exec timeout -k 30 {limit} " + " ".join(claude)
         return [*docker, self.image, "bash", "-c", script]
 
     def run(self, session: AgentSession) -> AgentResult:
@@ -219,10 +227,11 @@ class DockerClaude:
         (home / "role.md").write_text(shared + "\n" + role_prompt(session.role).read_text(encoding="utf-8"), encoding="utf-8")
         name = f"porter-{session.role}-{uuid.uuid4().hex[:8]}"
         try:
-            done = subprocess.run(
-                self.command(session, home, env, name), input=encodable(session.prompt),
-                capture_output=True, text=True, timeout=session.timeout, check=False,
-            )
+            with self.budget.reserve(resources.megabytes(self.memory), f"{self.run_label} {session.role}", on_wait=self.log):
+                done = subprocess.run(
+                    self.command(session, home, env, name), input=encodable(session.prompt),
+                    capture_output=True, text=True, timeout=session.timeout, check=False,
+                )
         except subprocess.TimeoutExpired:
             stop_container(name)
             return AgentResult("timeout", f"session passed {session.timeout:.0f}s")

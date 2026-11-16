@@ -2,14 +2,25 @@
 
 With the image, the suite exercises the real, contained path. Its temporary files then
 live under target/, because some Docker installs can't see the host's /tmp.
+
+Rust builds the suite makes under target/ add up to about 9 GB a run, and they used to
+pile up until the disk was full (open item T). After a passing run they are deleted;
+after a failing one they stay for inspection. ``PORTWRIGHT_KEEP_TEST_SCRATCH=1`` keeps
+them either way. The crate download cache (target/cargo-cache) always stays.
 """
 
 import os
+import shutil
 from pathlib import Path
 
 from portwright.toolchain import image_available
 
 REPO = Path(__file__).resolve().parents[1]
+# Every folder the tests build in. Keep in step with the REPO_TARGET/RUNS constants.
+SCRATCH = (
+    "orchestrator-tests", "gate-tests", "sandbox-tests", "offline-test", "containment-test", "integrity-wheel",
+    "rust-bugs", "pytest-tmp", "test-budget",
+)
 
 
 def pytest_configure(config):
@@ -18,3 +29,19 @@ def pytest_configure(config):
     elif not config.option.basetemp:
         (REPO / "target").mkdir(exist_ok=True)
         config.option.basetemp = str(REPO / "target" / "pytest-tmp")
+    # A machine-wide ledger belongs to real runs; tests keep their own.
+    os.environ.setdefault("PORTWRIGHT_BUDGET_DIR", str(REPO / "target" / "test-budget"))
+    # Real runs refuse to start below 10 GB free; the suite's builds need less.
+    os.environ.setdefault("PORTWRIGHT_MIN_FREE_GB", "2")
+
+
+def pytest_sessionfinish(session, exitstatus):
+    if exitstatus != 0 or os.environ.get("PORTWRIGHT_KEEP_TEST_SCRATCH") == "1":
+        return
+    if hasattr(session.config, "workerinput"):  # an xdist worker; the controller cleans up
+        return
+    for name in SCRATCH:
+        path = REPO / "target" / name
+        if path == Path(session.config.option.basetemp or "/nonexistent"):
+            continue  # pytest is still using it; it clears it at the next run's start
+        shutil.rmtree(path, ignore_errors=True)

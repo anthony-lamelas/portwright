@@ -212,6 +212,52 @@ def _run_one(mutant, source_dir, checks_dir, module, python, seed, max_examples,
     return mutant, "not_viable"
 
 
+def confirm_written_canaries(
+    tests_dir: str | Path,
+    source_dir: str | Path,
+    module: str,
+    written: list[Mutant],
+    *,
+    python: str | None = None,
+    workers: int = 4,
+) -> dict:
+    """Find which hand-written planted bugs change an upstream test's result.
+
+    A hand-written bug can change nothing: it may reproduce the original exactly, or
+    wrap a case that never happens (#13 found 3 of 119). The checks can't catch such a
+    bug, and a miss on it used to count against them like a real blind spot (open item
+    C). Each bug is applied to a copy and the upstream tests are run on it. A bug that
+    fails a test that passes on the original changes some output. One that fails none
+    is unconfirmed: either it is a no-op, or the upstream tests share the blind spot.
+    Run before the checks phase, by harness code; nothing here is shown to agents.
+    """
+    import sys
+
+    from portwright.gates.upstream_tests import run_tests
+
+    python = python or sys.executable
+    source_dir = Path(source_dir).resolve()
+    baseline = run_tests(tests_dir, {"path": str(source_dir), "module": module, "python": python})
+    passing = {test for test, status in baseline.items() if status == "passed"}
+
+    def judge(mutant: Mutant) -> tuple[Mutant, list[str]]:
+        with isolation.scratch("portwright-canary-") as scratch:
+            build_mutant(source_dir, mutant, scratch)
+            try:
+                outcome = run_tests(tests_dir, {"path": scratch, "module": module, "python": python})
+            except RuntimeError:  # the tests couldn't run at all: the bug breaks the import
+                return mutant, ["<tests didn't run>"]
+        return mutant, sorted(test for test in passing if outcome.get(test) != "passed")
+
+    with ThreadPoolExecutor(max_workers=max(1, workers)) as pool:
+        judged = list(pool.map(judge, written))
+    return {
+        "confirmed": {mutant.description: failed[:5] for mutant, failed in judged if failed},
+        "unconfirmed": [mutant.description for mutant, failed in judged if not failed],
+        "tests": len(passing),
+    }
+
+
 def canary_gate(
     checks_dir: str | Path,
     source_dir: str | Path,
@@ -225,10 +271,14 @@ def canary_gate(
     timeout: float = 5.0,
     workers: int = 4,
     written: list[Mutant] | None = None,
+    unconfirmed: set[str] | frozenset[str] = frozenset(),
 ) -> GateResult:
     """Fail if the checks catch too small a share of planted bugs.
 
-    With ``written``, only those hand-written bugs are used, all of them.
+    With ``written``, only those hand-written bugs are used, all of them. Those in
+    ``unconfirmed`` (by description) changed no upstream test's result (see
+    ``confirm_written_canaries``): a miss on one may be a no-op bug rather than a blind
+    spot, so it is listed apart and left out of the score. Catching one still counts.
     """
     import sys
 
@@ -246,7 +296,8 @@ def canary_gate(
             )
         )
     caught = [m for m, verdict in outcomes if verdict == "caught"]
-    missed = [m for m, verdict in outcomes if verdict == "missed"]
+    missed = [m for m, verdict in outcomes if verdict == "missed" and m.description not in unconfirmed]
+    unsure = [m for m, verdict in outcomes if verdict == "missed" and m.description in unconfirmed]
     not_viable = [m for m, verdict in outcomes if verdict == "not_viable"]
     # A generated mutant can be unviable (it breaks the import, say). A hand-written
     # bug is known to apply, so when it can't be judged the checks themselves broke,
@@ -261,9 +312,12 @@ def canary_gate(
     }
     if written:
         details["not_judged"] = [{"file": m.file, "bug": m.description} for m in not_viable]
+        details["missed_unconfirmed"] = [{"file": m.file, "bug": m.description} for m in unsure]
     passed = viable > 0 and score >= minimum
     kind = "hand-written planted bugs" if written else "planted bugs"
     summary = f"caught {len(caught)}/{viable} {kind} ({score:.0%}, minimum {minimum:.0%})"
     if written and not_viable:
         summary += f"; {len(not_viable)} couldn't be judged because the checks failed without a difference"
+    if unsure:
+        summary += f"; {len(unsure)} missed that no upstream test notices either, left out of the score"
     return GateResult("canaries", passed, summary, details)
