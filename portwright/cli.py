@@ -10,7 +10,7 @@ import sys
 import time
 from pathlib import Path
 
-from portwright import isolation
+from portwright import isolation, resources
 from portwright.agents import DockerClaude, LimitReached
 from portwright.auth import SUBSCRIPTION, Auth, AuthError
 from portwright.orchestrator import Config, Porter
@@ -91,8 +91,12 @@ def command_run(options) -> int:
     leftover = backend.stop_leftovers(sessions)
     if leftover:
         print(f"Stopped {leftover} agent containers left by an earlier run.", flush=True)
+    # Every agent and gate container watches this file and ends itself once it stops
+    # changing, so even SIGKILL can't leave containers running for long.
+    heartbeat = resources.Heartbeat(Path(config.run_dir) / "build" / "heartbeat" / "beat")
+    heartbeat.start()
     # Turn SIGTERM into an exit so the cleanup below runs. SIGKILL can't be caught;
-    # the containers' own time limit and the startup cleanup cover that case.
+    # the heartbeat, the containers' own time limit and the startup cleanup cover that case.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     deadline = time.time() + options.max_wait_hours * 3600
     if options.redo:
@@ -102,6 +106,10 @@ def command_run(options) -> int:
             try:
                 state = Porter(config, backend).run()
                 break
+            except resources.LowDiskSpace as low:
+                # Waiting won't free disk space; a person has to.
+                print(f"Paused: {low}")
+                return 4
             except LimitReached as limit:
                 if not options.wait or time.time() > deadline:
                     print(f"Paused at a usage limit: {limit}\nRun the same command again to resume.")
@@ -113,6 +121,7 @@ def command_run(options) -> int:
                 time.sleep(wait)
     finally:
         backend.stop_leftovers(sessions)
+        heartbeat.stop()
         proxy.stop()
     report = json.loads((Path(config.run_dir) / "control" / "report.json").read_text())
     print(f"Result: {report['result']}")
@@ -125,6 +134,13 @@ def command_run(options) -> int:
 def command_approve(options) -> int:
     """Only this command can accept a behavior difference or a new crate."""
     store = JsonStore(Path(options.run_dir).resolve() / "control" / "run.json")
+    if options.domain:
+        # The domain review's gaps are accepted as they are; later phases may meet them.
+        store.update(lambda data: data.update(domain_review_accepted=True))
+        print("Accepted the domain review's findings. Run again with --redo checks.")
+        return 0
+    if options.value is None:
+        sys.exit("approve needs a difference signature, --crate NAME, or --domain")
     key = "approved_crates" if options.crate else "approved_differences"
     store.update(lambda data: data.setdefault(key, []).append(options.value))
     print(f"Approved {options.value}")
@@ -210,7 +226,8 @@ def main(argv=None) -> int:
     approve = commands.add_parser("approve", help="approve a difference signature or a crate")
     approve.add_argument("--run-dir", required=True)
     approve.add_argument("--crate", action="store_true")
-    approve.add_argument("value")
+    approve.add_argument("--domain", action="store_true", help="accept the shim domain review's findings")
+    approve.add_argument("value", nargs="?")
     approve.set_defaults(handler=command_approve)
     decide = commands.add_parser("decide", help="record a ruling every later agent session must follow")
     decide.add_argument("--run-dir", required=True)

@@ -333,8 +333,10 @@ fn numeric_key(flags: &Value) -> Option<BigInt> {
 /// [`Pattern`] is returned for equal keys, so callers can keep identity.
 ///
 /// # Errors
-/// `TypeError` for unhashable or non-int flags, then whatever compiling raises.
+/// The shim's fixed `ValueError` for `re.DEBUG`, `TypeError` for unhashable or
+/// non-int flags, then whatever compiling raises.
 pub fn compile_cached(pattern: &[u32], flags_value: &Value) -> Result<Arc<Pattern>> {
+    refuse_debug(flags_value)?;
     check_hashable(flags_value)?;
     let number = numeric_key(flags_value);
     if let Some(n) = &number {
@@ -369,6 +371,21 @@ pub fn compile_cached(pattern: &[u32], flags_value: &Value) -> Result<Arc<Patter
         insert(&mut c, (pattern.to_vec(), int_flags), &p);
     }
     Ok(p)
+}
+
+/// The shim's `_flags`: `re.DEBUG` (flag 128) makes CPython print its internal
+/// parse tree and sre bytecode, so the shim refuses it after checking the text
+/// arguments and before `re` sees the flags.
+fn refuse_debug(flags_value: &Value) -> Result<()> {
+    if let Value::Int(n) = flags_value {
+        if (n & BigInt::from(flags::DEBUG)) != BigInt::zero() {
+            return Err(Error::Value(
+                "pc_re doesn't support re.DEBUG, which prints CPython's internal parse tree"
+                    .to_owned(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn insert(c: &mut Cache, key: CacheKey, p: &Arc<Pattern>) {

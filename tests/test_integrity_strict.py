@@ -382,18 +382,17 @@ def test_each_finished_port_passes(tmp_path, folder, module, strict):
     assert result.passed, result.details["problems"]
 
 
-def test_pc_re_under_strict_bindings_fails_only_on_its_decimal_conversion(tmp_path):
-    """pc_re turns a decimal.Decimal argument into text with PyO3's rust_decimal
-    conversion, which calls str() on it, and builds Decimals back by calling
-    decimal.Decimal(). That runs the decimal module's code. Reported, not fixed here."""
+def test_pc_re_passes_strict_bindings_without_its_decimal_conversion(tmp_path):
+    """pc_re used to turn a decimal.Decimal argument into text with PyO3's rust_decimal
+    conversion, which calls str() on it, and to build Decimals back by calling
+    decimal.Decimal(). Its bindings now only name a Decimal, which the shim refuses
+    anyway, and the feature is gone (open item O)."""
     core, py = crate_names("pc_re")
     result = integrity_gate(
         finished_port(tmp_path, "pycompat/ports/pc_re"), "pc_re", core_crate=core, strict_bindings=True, bindings_dir=f"crates/{py}",
     )
-    assert result.details["problems"] == [
-        "crates/pc-re-port-py/Cargo.toml: PyO3 feature rust_decimal converts values by running Python code, "
-        "which strict bindings don't allow"
-    ]
+    assert result.details["problems"] == []
+    assert result.passed
 
 
 def test_build_scripts_and_crate_sources_elsewhere_are_caught(tmp_path):

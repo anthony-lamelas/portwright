@@ -122,13 +122,9 @@ fn to_value(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
     if type_is("re.RegexFlag") && obj.is_instance_of::<PyInt>() {
         return Ok(Value::Int(int_to_bigint(obj)?));
     }
-    let is_decimal = type_is("decimal.Decimal");
-    if is_decimal {
-        return Ok(match obj.extract::<rust_decimal::Decimal>() {
-            Ok(d) => Value::Decimal(d.to_string()),
-            Err(_) => Value::Other("Decimal".to_owned()),
-        });
-    }
+    // Anything else, a `decimal.Decimal` included, is only named: the shim refuses it
+    // with a TypeError before using it. Reading a Decimal's value would run the
+    // `decimal` module's own code (`str()`), which strict bindings forbid.
     Ok(Value::Other(type_name(obj)))
 }
 
@@ -209,10 +205,6 @@ fn to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
             }
             dict.into_any()
         }
-        Value::Decimal(text) => text
-            .parse::<rust_decimal::Decimal>()
-            .map_err(|e| PyValueError::new_err(e.to_string()))?
-            .into_pyobject(py)?,
         Value::Pattern(p) => pattern_object(py, p)?.into_any(),
         Value::Match(m) => Bound::new(
             py,
@@ -221,7 +213,8 @@ fn to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>> {
             },
         )?
         .into_any(),
-        Value::Other(_) => {
+        // The core never returns either: a Decimal argument is refused up front.
+        Value::Decimal(_) | Value::Other(_) => {
             return Err(PyTypeError::new_err(format!(
                 "cannot convert {} back to Python",
                 value.type_name()

@@ -199,11 +199,13 @@ const MAX_DEPTH: usize = 900;
 /// The `TypeError` `pc_format`'s guard raises when `value` (or something
 /// inside it) isn't a supported built-in, checking depth-first: for a dict,
 /// each key before its value. A set or frozenset holding a str or bytes
-/// (directly or inside a tuple or frozenset) raises after its items pass.
+/// (directly or inside a tuple or frozenset) raises after its items pass, as
+/// does one of more than one item where an item is or holds a NaN.
 ///
 /// # Errors
 /// `TypeError("pc_format supports built-in types only, not <name>")`,
-/// `TypeError("pc_format doesn't support sets of str or bytes, ...")`, or
+/// `TypeError("pc_format doesn't support sets of str or bytes, ...")`,
+/// `TypeError("pc_format doesn't support sets holding NaN with other items, ...")`, or
 /// `RecursionError` for containers nested more than 900 deep.
 pub fn check_builtin(value: &Value) -> PcResult<()> {
     check_nested(value, 1)
@@ -234,6 +236,11 @@ fn check_nested(value: &Value, depth: usize) -> PcResult<()> {
                     "pc_format doesn't support sets of str or bytes, whose order changes between processes",
                 ));
             }
+            if items.len() > 1 && items.iter().any(hash_by_address) {
+                return Err(PyError::type_error(
+                    "pc_format doesn't support sets holding NaN with other items, whose order changes between processes",
+                ));
+            }
             Ok(())
         }
         _ => Ok(()),
@@ -246,6 +253,16 @@ fn hash_randomized(value: &Value) -> bool {
     match value {
         Value::Str(_) | Value::Bytes(_) => true,
         Value::Tuple(items) | Value::FrozenSet(items) => items.iter().any(hash_randomized),
+        _ => false,
+    }
+}
+
+/// Upstream's `_hash_by_address`: whether the value's hash depends on its
+/// memory address (a NaN float, or a tuple or frozenset holding one).
+fn hash_by_address(value: &Value) -> bool {
+    match value {
+        Value::Float(x) => x.is_nan(),
+        Value::Tuple(items) | Value::FrozenSet(items) => items.iter().any(hash_by_address),
         _ => false,
     }
 }

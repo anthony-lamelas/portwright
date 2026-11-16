@@ -113,7 +113,7 @@ def test_iso_clock(clock, sep, date):
     same("time_fromisoformat", "T" + clock)
 
 
-# ---- person-granted change: timezone_name(None) raises AttributeError
+# ---- timezone_name(None) raises the shim's fixed TypeError (was AttributeError, a granted change)
 @given(st.none())
 @example(None)
 def test_timezone_name_none(off):

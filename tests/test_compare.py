@@ -242,3 +242,38 @@ def test_replayed_regressions_keep_callbacks_as_expressions(compare):
     assert isinstance(value["f"], PythonExpression)
     session = compare("def g(): return 1\ndef f(x): return x['f']()", "def g(): return 1\ndef f(x): return x['f']()")
     session.same("f", value)
+
+
+def test_expression_probes_get_their_own_signature(compare):
+    """isodate sent inspect.isfunction(...) through ISO8601Error, so approving that
+    difference would have hidden real ISO8601Error message differences (open item U)."""
+    session = compare(
+        "class Error(ValueError):\n    pass\ndef check(value):\n    return value",
+        "class Error(ValueError):\n    def __str__(self):\n        return 'changed'\ndef check(value):\n    return not value",
+    )
+    probe = PythonExpression("callable(len)")
+    with pytest.raises(Divergence):
+        session.same("Error", "text")
+    with pytest.raises(Divergence):
+        session.same("Error", probe)
+    with pytest.raises(Divergence):
+        session.same("check", [probe])
+    signatures = set(session.divergences)
+    assert "Error outcome.value.v.message" in signatures
+    assert "Error <callable(len)> outcome.value.v.message" in signatures
+    assert "check <callable(len)> outcome.value.t" in signatures  # a list, then a bool
+    # Approving the plain difference leaves the probe's difference standing.
+    session.approved = frozenset({"Error outcome.value.v.message"})
+    session.same("Error", "text")
+    with pytest.raises(Divergence):
+        session.same("Error", probe)
+
+
+def test_long_expressions_keep_distinct_signatures():
+    from portwright.compare.session import probe_label
+
+    first, second = "x" * 200 + "a", "x" * 200 + "b"
+    assert probe_label([first]) != probe_label([second])
+    assert len(probe_label([first])) < 120
+    assert probe_label([]) == ""
+    assert probe_label(["lambda s:\n  s"]) == " <lambda s: s>"

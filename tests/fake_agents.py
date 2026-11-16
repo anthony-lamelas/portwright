@@ -76,6 +76,7 @@ class FakeAgents:
             "shared_paths": [],
         }
         self.behaviors = behaviors or {}
+        self.domain_leaks: list[dict] = []
 
     def run(self, session: AgentSession) -> AgentResult:
         self.calls.append(f"{session.role}:{session.scratch.name}")
@@ -115,6 +116,10 @@ class FakeAgents:
 
     def reviewer(self, session):
         (mount(session, "/work/out") / "review.md").write_text("No must-fix findings.\n")
+
+    def domain_reviewer(self, session):
+        (mount(session, "/work/out") / "domain.json").write_text(json.dumps({"leaks": self.domain_leaks}))
+        (mount(session, "/work/out") / "domain.md").write_text(f"{len(self.domain_leaks)} gaps\n")
 
     def cleanup(self, session):
         pass
@@ -190,3 +195,42 @@ def regressing_cleanup(agents, session):
     assert new != text
     core.write_text(new)
     return AgentResult("ok", "cleaned up", {})
+
+
+UNUSED_TOOL = "".join(
+    f"pub fn compare_tool_{n}(values: &[u32]) -> u64 {{\n    let mut total = 0u64;\n"
+    f"    for value in values {{\n        total += u64::from(*value) * {n + 2};\n    }}\n    total\n}}\n\n"
+    for n in range(150)
+).rstrip("\n") + "\n"
+
+
+def porter_builds_its_own_tool(agents, session):
+    """A porter that adds machinery its APIs never call, as in humanize (#11), the first time."""
+    if session.role == "porter" and sum(call.startswith("porter") for call in agents.calls) == 1:
+        port = mount(session, "/work/port")
+        copy_real_port(port)
+        core = port / "crates" / CORE / "src"
+        (core / "compare_tool.rs").write_text(UNUSED_TOOL)
+        (core / "lib.rs").write_text((core / "lib.rs").read_text() + "\npub mod compare_tool;\n")
+        return AgentResult("ok", "done", {})
+    if session.role == "porter":
+        port = mount(session, "/work/port")
+        (port / "crates" / CORE / "src" / "compare_tool.rs").unlink(missing_ok=True)
+        copy_real_port(port)
+        return AgentResult("ok", "done", {})
+    return None
+
+
+def broken_benchmark_first(agents, session):
+    """Checks that pass the first time, with a benchmark that raises on the original (open item L)."""
+    if session.role == "test_writer" and "checks" in session.scratch.name:
+        agents.test_writer(session)
+        benchmarks = mount(session, "/work/checks") / "benchmarks.json"
+        entries = json.loads(benchmarks.read_text())
+        entries.append({"name": "broken", "target": "truncate", "args": [["not", "a", "string"], "x"]})
+        benchmarks.write_text(json.dumps(entries))
+        return AgentResult("ok", "done", {})
+    if session.role == "test_writer" and "benchmarks" in session.scratch.name:
+        (mount(session, "/work/checks") / "test_sneaky.py").write_text("def test_nothing():\n    pass\n")
+        return None  # the default writes the two good benchmarks
+    return None

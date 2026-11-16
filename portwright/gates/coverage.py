@@ -66,11 +66,35 @@ PORTER_CONFIG=/tmp/config.json PYTHONPATH=/harness python -m pytest /checks -p p
 cd /work
 cargo llvm-cov report --json --summary-only --release --output-path /work/target/rust-coverage.json \
   --ignore-filename-regex '(/opt/cargo|rustc)'
+cargo llvm-cov report --lcov --release --output-path /work/target/rust-coverage.lcov \
+  --ignore-filename-regex '(/opt/cargo|rustc)'
 """
 
 
-def rust_coverage(workspace, checks_dir, upstream_path, module: str, crate: str, *, target_dir=None, max_examples: int = 100) -> GateResult:
-    """Measure which Rust the checks reach. Uncovered Rust may be invented or untested."""
+def parse_lcov(text: str, prefix: str = "/work/") -> dict[str, dict[int, int]]:
+    """Execution counts per instrumented line: ``{file: {line: count}}``. Lines llvm
+    doesn't instrument (comments, declarations) are absent."""
+    hits: dict[str, dict[int, int]] = {}
+    current = None
+    for line in text.splitlines():
+        if line.startswith("SF:"):
+            current = hits.setdefault(line[3:].removeprefix(prefix), {})
+        elif line.startswith("DA:") and current is not None:
+            number, count = line[3:].split(",")[:2]
+            current[int(number)] = current.get(int(number), 0) + int(count)
+        elif line == "end_of_record":
+            current = None
+    return hits
+
+
+def rust_coverage(
+    workspace, checks_dir, upstream_path, module: str, crate: str, *, target_dir=None, max_examples: int = 100,
+    per_line: bool = False,
+) -> GateResult:
+    """Measure which Rust the checks reach. Uncovered Rust may be invented or untested.
+
+    With ``per_line``, ``details["line_hits"]`` holds each file's execution count per line.
+    """
     config = json.dumps(
         {
             "reference": {"path": "/upstream", "module": module, "python": "python"},
@@ -107,11 +131,43 @@ def rust_coverage(workspace, checks_dir, upstream_path, module: str, crate: str,
         }
         for item in own
     ]
+    details = {"lines": lines_percent, "functions": functions_percent, "files": sorted(files, key=lambda f: f["lines"])}
+    lcov = report.with_suffix(".lcov")
+    if per_line and lcov.exists():
+        details["line_hits"] = {
+            name: lines for name, lines in parse_lcov(lcov.read_text(encoding="utf-8", errors="replace")).items()
+            if not name.startswith("vendor/")
+        }
     return GateResult(
         "rust_coverage", True,
         f"checks reach {lines_percent:.1f}% of Rust lines and {functions_percent:.1f}% of functions",
-        {"lines": lines_percent, "functions": functions_percent, "files": sorted(files, key=lambda f: f["lines"])},
+        details,
     )
+
+
+def new_code_coverage(added: dict[str, set[int]], line_hits: dict[str, dict[int, int]]) -> dict:
+    """How much of a task's added Rust the checks run.
+
+    ``added`` maps files to the line numbers a task added. Only lines llvm instruments
+    count. An added file with no coverage data at all holds no code (only types and
+    constants), or isn't compiled into the module; it is listed, not counted.
+    """
+    run, unrun, uninstrumented = 0, {}, []
+    for name, lines in sorted(added.items()):
+        hits = line_hits.get(name)
+        if hits is None:
+            uninstrumented.append(name)
+            continue
+        missed = sorted(line for line in lines if hits.get(line) == 0)
+        run += sum(1 for line in lines if hits.get(line, 0) > 0)
+        if missed:
+            unrun[name] = missed
+    unrun_count = sum(len(lines) for lines in unrun.values())
+    total = run + unrun_count
+    return {
+        "lines": total, "run": run, "percent": 100.0 * run / total if total else 100.0,
+        "unrun": unrun, "uninstrumented_files": uninstrumented,
+    }
 
 
 def _percent(files: list[dict], kind: str) -> float:

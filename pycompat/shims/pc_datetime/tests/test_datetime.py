@@ -309,3 +309,10 @@ def test_timestamps_and_zone_changes():
             same(pc.datetime_astimezone, lambda a, o: dt_out(dt_in(a).astimezone(tz(o))), d, offset)
     for stamp, offset in itertools.product([0, 1.5, -1.5, 1e9, 1709211909.123456, 0.0000005, -62135596800, 253402300800, 1e20, float("nan")], [0, 3600, -34200]):
         same(pc.datetime_fromtimestamp, lambda s, o: dt_out(dt.datetime.fromtimestamp(s, tz(o))), stamp, offset)
+
+
+def test_timezone_name_of_none_is_a_fixed_error():
+    """Open item Q: None reached None.tzname and raised Python's own AttributeError text."""
+    with pytest.raises(TypeError) as caught:
+        pc.timezone_name(None)
+    assert str(caught.value) == "timezone_name needs a UTC offset in seconds, not None"

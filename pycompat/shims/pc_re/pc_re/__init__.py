@@ -13,6 +13,9 @@ The ``p`` of ``pattern_*`` functions must be a compiled pattern and the ``m`` of
 ``match_*`` functions a match object. Anything else raises the error the method lookup
 would (AttributeError, or TypeError for a Pattern's data attribute), from a fixed table
 and without touching the object.
+
+``re.DEBUG`` (flag 128) raises ValueError. It makes CPython print its internal parse
+tree and sre bytecode, which aren't part of what this package covers.
 """
 
 import re as _re
@@ -64,6 +67,20 @@ VERBOSE = int(_re.VERBOSE)
 UNICODE = int(_re.UNICODE)
 
 
+_DEBUG = int(_re.DEBUG)
+
+
+def _flags(flags):
+    """``flags``, unless it asks for ``re.DEBUG``, whose output is CPython's internals.
+
+    Checked after the text arguments and before ``re`` sees the flags, so non-int flags
+    still raise whatever ``re`` raises for them.
+    """
+    if isinstance(flags, int) and flags & _DEBUG:
+        raise ValueError("pc_re doesn't support re.DEBUG, which prints CPython's internal parse tree")
+    return flags
+
+
 def _text(value, what):
     if not isinstance(value, str):
         raise TypeError(f"{what} must be str, not {type(value).__name__}")
@@ -112,48 +129,48 @@ def _window(p, method, string, pos, endpos):
 @_builtins_only
 def compile(pattern, flags=0):  # noqa: A001 - mirrors re.compile
     """``re.compile(pattern, flags)``."""
-    return _re.compile(_text(pattern, "pattern"), flags)
+    return _re.compile(_text(pattern, "pattern"), _flags(flags))
 
 
 @_builtins_only
 def search(pattern, string, flags=0):
-    return _re.search(_text(pattern, "pattern"), _text(string, "string"), flags)
+    return _re.search(_text(pattern, "pattern"), _text(string, "string"), _flags(flags))
 
 
 @_builtins_only
 def match(pattern, string, flags=0):
-    return _re.match(_text(pattern, "pattern"), _text(string, "string"), flags)
+    return _re.match(_text(pattern, "pattern"), _text(string, "string"), _flags(flags))
 
 
 @_builtins_only
 def fullmatch(pattern, string, flags=0):
-    return _re.fullmatch(_text(pattern, "pattern"), _text(string, "string"), flags)
+    return _re.fullmatch(_text(pattern, "pattern"), _text(string, "string"), _flags(flags))
 
 
 @_builtins_only
 def findall(pattern, string, flags=0):
-    return _re.findall(_text(pattern, "pattern"), _text(string, "string"), flags)
+    return _re.findall(_text(pattern, "pattern"), _text(string, "string"), _flags(flags))
 
 
 @_builtins_only
 def finditer(pattern, string, flags=0):
     """``list(re.finditer(...))``: a list, so errors surface at the call."""
-    return list(_re.finditer(_text(pattern, "pattern"), _text(string, "string"), flags))
+    return list(_re.finditer(_text(pattern, "pattern"), _text(string, "string"), _flags(flags)))
 
 
 @_builtins_only
 def sub(pattern, repl, string, count=0, flags=0):
-    return _re.sub(_text(pattern, "pattern"), _text(repl, "repl"), _text(string, "string"), count, flags)
+    return _re.sub(_text(pattern, "pattern"), _text(repl, "repl"), _text(string, "string"), count, _flags(flags))
 
 
 @_builtins_only
 def subn(pattern, repl, string, count=0, flags=0):
-    return _re.subn(_text(pattern, "pattern"), _text(repl, "repl"), _text(string, "string"), count, flags)
+    return _re.subn(_text(pattern, "pattern"), _text(repl, "repl"), _text(string, "string"), count, _flags(flags))
 
 
 @_builtins_only
 def split(pattern, string, maxsplit=0, flags=0):
-    return _re.split(_text(pattern, "pattern"), _text(string, "string"), maxsplit, flags)
+    return _re.split(_text(pattern, "pattern"), _text(string, "string"), maxsplit, _flags(flags))
 
 
 @_builtins_only

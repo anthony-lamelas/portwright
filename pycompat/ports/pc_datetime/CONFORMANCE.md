@@ -11,6 +11,11 @@
 
 This report shows the port matched the original on the inputs tested. It doesn't prove the two are equivalent.
 
+## Changes since this report (by hand, not a new run)
+
+- **`timezone_name(None)`** (harness issue #79) now raises the shim's fixed `TypeError("timezone_name needs a UTC offset in seconds, not None")` in both the shim and the core, instead of Python's own `AttributeError` text, which the person-granted change below reproduced.
+- **This port predates the shim's domain checks (#55).** Against the current shim, 5 of its 36 tests fail (value tuples, `strftime` extensions, float offsets, the `fromtimestamp` error), and the differential finds the matching differences. Rebuilding it against the current shim is an open item.
+
 ## Gates
 | Gate | Result | Detail |
 | --- | --- | --- |

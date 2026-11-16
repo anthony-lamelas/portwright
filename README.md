@@ -148,7 +148,7 @@ There is no Python source to port for a built-in, so each one gets a **shim**: a
 
 - **`--strict-bindings`:** the PyO3 layer may only convert values and raise exceptions. It can't call `repr()`, `str()`, or any Python method that would run CPython's own code. A short list of conversion calls, such as `encode` with `surrogatepass`, is allowed.
 - **Hand-written planted bugs (`--canaries`):** the harness can't plant bugs in C code, so each shim has 38 to 42 subtle wrong versions, kept from agents. The checks must notice them.
-- **Declared domains:** shims accept only core built-in values. A `Decimal` raises a fixed `TypeError`, because its formatting is its own module's code.
+- **Declared domains:** shims accept only core built-in values. A `Decimal` raises a fixed `TypeError`, because its formatting is its own module's code. Before the checks are written, a reviewer reads the shim for inputs that still reach behavior outside the built-ins, and the run stops for a person if it finds any (#74).
 
 | Crate | Covers | Status |
 |---|---|---|
@@ -164,7 +164,7 @@ There is no Python source to port for a built-in, so each one gets a **shim**: a
 
 **`pc_unicode`** matched CPython on 62,093 compared calls and passed all 54 shim tests, including the 6 held back. The checks caught 36 of 38 planted bugs. It took one run and about $21. Through Python it ranges from 0.81x (`split`, which is slower) to 3.1x faster. The final reviewer found one difference: a keyword argument whose name contains a lone surrogate comes out garbled in the port's error message. Its Unicode tables were generated from CPython's own `unicodedata`.
 
-**`pc_re`** matched CPython's `re` on 68,641 compared calls and passed all 195 shim tests. The checks caught all 39 planted bugs. It took one run and about $49, starting from the regex engine written for `parse`. Through Python it is 1.3x to 7.7x faster. `re.DEBUG` output is an approved difference. The core produces CPython's exact debug dump, but strict bindings can't write to Python's `sys.stdout`. The final reviewer reported that the port stops at 900 levels of nesting, where CPython allows about 996 when called from a script. The harness's comparison runs at a different Python stack depth and couldn't reproduce it.
+**`pc_re`** matched CPython's `re` on 68,641 compared calls and passed all 195 shim tests. The checks caught all 39 planted bugs. It took one run and about $49, starting from the regex engine written for `parse`. Through Python it is 1.3x to 7.7x faster. `re.DEBUG` output was an approved difference, because strict bindings can't write to Python's `sys.stdout`; the shim and the port now refuse `DEBUG` with a fixed error instead (#76). Since its report, the bindings dropped PyO3's `rust_decimal` conversion, which ran the `decimal` module's code, so the port now passes strict bindings (#77). That leaves one difference, the message of `error(Decimal('1'))`. Comparing warnings (#72) also found that the port never emits `re`'s `FutureWarning`. Its report lists both. The final reviewer reported that the port stops at 900 levels of nesting, where CPython allows about 996 when called from a script. The harness's comparison runs at a different Python stack depth and couldn't reproduce it.
 
 **`pc_datetime`** matched CPython on 17,485 compared calls and passed all 30 shim tests. The checks caught 37 of 41 planted bugs, and fuzzing found no crashes in 34 targets. It took about $36 over two runs, interrupted when the machine was off. Through Python it is 1.8x to 5.1x faster. It reproduces glibc's `strftime` extensions (`%-d`, `%_H` and others) and several quirks of CPython's parsers, which the report lists. The final review's two "Must fix" findings and the two proposed differences in its report predate the final fix round. I checked by hand that all four are fixed and covered by checks: long `strptime` formats that hit a regex size limit, keyword names with lone surrogates, `timezone_name(None)` and the `fromtimestamp` `OSError`. Reports from new runs list which review findings their checks reproduced and fixed (#60).
 
@@ -187,12 +187,14 @@ git clone https://github.com/r1chardj0n3s/parse target/src/parse
 
 - **Your own API key:** use `--auth api_key` with `ANTHROPIC_API_KEY` set. Subscription mode (the default) is for personal runs on your own account, and it refuses to start if an API key is set.
 - **Resume:** run the same command again. Runs survive crashes and usage limits; `--wait` waits out limits for up to 72 hours.
-- **Approve:** `portwright.cli approve --run-dir ... "<difference>"` approves a proposed difference, and `--crate` adds a crate to the approved list. Only a person should do either.
+- **Approve:** `portwright.cli approve --run-dir ... "<difference>"` approves a proposed difference, `--crate` adds a crate to the approved list, and `--domain` accepts a shim domain review's findings. Only a person should do any of these.
 - **Cost:** the `parse` run took 31 agent sessions and about $56 of API-equivalent usage, as estimated by Claude Code: porters $12, debuggers $15, performance $18, everything else $11. That total includes debugger sessions whose fixes were rejected because of the harness bugs above. It doesn't include building the harness.
-- **Parallel agents:** `--max-agents 2` runs independent tasks at once, each in its own worktree. All agent containers together are capped at 60% of RAM.
+- **Parallel agents:** `--max-agents 2` runs independent tasks at once, each in its own worktree. All agent containers on the machine together, across runs, are capped at 60% of RAM; a session that doesn't fit waits (#73). Each gate container gets 40% of RAM, at most 6 GB (`PORTWRIGHT_GATE_MEMORY`).
+- **Disk:** sessions, gates and builds refuse to start with less than 10 GB free (`PORTWRIGHT_MIN_FREE_GB`). The run pauses with exit code 4; free space and run the same command again.
+- **A killed run:** every container ends itself within about three minutes of the run's heartbeat stopping, even after SIGKILL (#70).
 - **Built-in shims:** `--strict-bindings`, `--canaries DIR` (hand-written planted bugs, relative to `--source`) and `--reference-note TEXT` (what "the original" is, for the report).
 - **Reusing earlier ports:** `--vendor NAME=DIR` copies a finished crate into `vendor/NAME` and freezes it. `--seed NAME=DIR` copies earlier code agents may start from, which isn't frozen and has to pass the gates.
-- **Harness tests:** `.venv/bin/python -m pytest tests` (about 20 minutes, no Claude usage). The tests use a small fixture library with a hand-written Rust port and scripted agents.
+- **Harness tests:** `.venv/bin/python -m pytest tests` (about 20 minutes, no Claude usage). The tests use a small fixture library with a hand-written Rust port and scripted agents. A passing run deletes its build folders under `target/`; `PORTWRIGHT_KEEP_TEST_SCRATCH=1` keeps them.
 
 ## Limits, read before trusting a report
 

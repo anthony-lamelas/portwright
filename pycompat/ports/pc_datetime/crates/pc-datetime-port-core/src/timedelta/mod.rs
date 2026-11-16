@@ -183,15 +183,14 @@ pub fn timedelta_floor_divide(args: &[Value], kwargs: &Kwargs) -> PyResult<Value
 /// `pc_datetime.timezone_name`.
 ///
 /// # Errors
-/// Binding errors, `_tz`'s errors, and AttributeError for `None`.
+/// Binding errors, `_tz`'s errors, and the shim's fixed TypeError for `None`.
 pub fn timezone_name(args: &[Value], kwargs: &Kwargs) -> PyResult<Value> {
     const PARAMS: [Param; 1] = [Param::required("utcoffset")];
     let v = crate::timedelta::bind_ref("timezone_name", &PARAMS, args, kwargs)?;
     match offset_in(&v[0])? {
         Some(tz) => Ok(Value::str(tz.tzname())),
-        // The shim calls `None.tzname(None)`, which raises AttributeError.
-        None => Err(PyError::attribute_error(
-            "'NoneType' object has no attribute 'tzname'",
+        None => Err(PyError::type_error(
+            "timezone_name needs a UTC offset in seconds, not None",
         )),
     }
 }
