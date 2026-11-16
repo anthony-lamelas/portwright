@@ -1,22 +1,17 @@
+//! Fuzzes `pc_format_port_core::format_value`: errors are expected, panics are bugs.
 #![no_main]
-//! Fuzzes `pc_format_port_core::format_value`. Python exceptions are expected; only
-//! panics, aborts, hangs and runaway allocations are failures.
 
-use arbitrary::Unstructured;
 use libfuzzer_sys::fuzz_target;
-use pc_format_port_core as core_api;
-
-#[path = "../common/mod.rs"]
-mod common;
-
-fn go(u: &mut Unstructured) -> arbitrary::Result<()> {
-    let v = if u.ratio(1u8, 2)? { common::number(u)? } else { common::value(u)? };
-    let spec = if u.ratio(9u8, 10)? { core_api::Value::Str(common::py_str(u, 24)?) } else { common::value(u)? };
-    common::run(core_api::format_value(&v, &spec));
-    Ok(())
-}
+use pc_format_port_core as core;
+use pc_format_port_core::{Value};
+use pcf_fuzz::{Gen};
 
 fuzz_target!(|data: &[u8]| {
-    let mut u = Unstructured::new(data);
-    let _ = go(&mut u);
+    let mut g = Gen::bounded(data);
+    let value = g.format_arg();
+    let spec = match g.pick(10) {
+        0 => g.value(1),
+        _ => Value::Str(g.spec()),
+    };
+    let _ = core::format_value(&value, &spec);
 });

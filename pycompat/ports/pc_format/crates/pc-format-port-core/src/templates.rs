@@ -1,7 +1,6 @@
 //! `str.format`: template parsing, field lookup, conversions and nested specs,
 //! ported from CPython 3.12's `Objects/stringlib/unicode_format.h`.
 
-mod attrs;
 mod object;
 
 use std::borrow::Cow;
@@ -251,39 +250,34 @@ fn next_markup(s: &[u32], pos: &mut usize) -> PcResult<Option<(Range<usize>, Opt
     Ok(Some((literal, Some(field))))
 }
 
-/// The shim's `_refuse_attribute_fields`: `TypeError` if any field (or a
-/// field nested one level in a spec) reads an attribute. A template that
-/// `formatter_parser` rejects anywhere is skipped entirely.
+/// The refusal raised for any attribute field (`{0.real}`).
+fn attribute_refused() -> PyError {
+    PyError::type_error("pc_format doesn't support attribute access in format fields")
+}
+
+/// The shim's `_refuse_attribute_fields`: scans fields in order (and the
+/// fields nested one level in their specs) and raises `TypeError` at the
+/// first one that reads an attribute. The scan stops silently at the first
+/// parse error, since `str.format` would raise it there itself.
 fn refuse_attribute_fields(s: &[u32], depth: u32) -> PcResult<()> {
-    // Every refusal is the same error, so field order doesn't matter: the
-    // template is refused if it parses and any field reads an attribute.
-    let mut refused = false;
     let mut pos = 0;
     loop {
         match next_markup(s, &mut pos) {
             Ok(Some((_, Some(field)))) => {
-                if refused {
-                    continue;
-                }
                 let name = s.get(field.name.clone()).unwrap_or_default();
-                let spec = s.get(field.spec.clone()).unwrap_or_default();
+                if field_reads_attribute(name) {
+                    return Err(attribute_refused());
+                }
                 // A spec without `{` holds no fields.
-                refused = field_reads_attribute(name)
-                    || (field.spec_needs_expanding
-                        && depth < 1
-                        && refuse_attribute_fields(spec, depth + 1).is_err());
+                if field.spec_needs_expanding && depth < 1 {
+                    let spec = s.get(field.spec.clone()).unwrap_or_default();
+                    refuse_attribute_fields(spec, depth + 1)?;
+                }
             }
             Ok(Some((_, None))) => {}
-            Ok(None) => break,
-            Err(_) => return Ok(()),
+            Ok(None) | Err(_) => return Ok(()),
         }
     }
-    if refused {
-        return Err(PyError::type_error(
-            "pc_format doesn't support attribute access in format fields",
-        ));
-    }
-    Ok(())
 }
 
 /// Walks `formatter_field_name_split(name)` until it yields an attribute
@@ -408,15 +402,11 @@ impl<'a> Context<'a> {
         }
         let mut obj = match index {
             None => kwarg_lookup(self.kwargs, first)?,
-            Some(i) => self
-                .args
-                .get(i)
-                .map(|v| Obj::Val(Cow::Borrowed(v)))
-                .ok_or_else(|| {
-                    PyError::index_error(format!(
-                        "Replacement index {i} out of range for positional args tuple"
-                    ))
-                })?,
+            Some(i) => self.args.get(i).map(Obj::borrowed).ok_or_else(|| {
+                PyError::index_error(format!(
+                    "Replacement index {i} out of range for positional args tuple"
+                ))
+            })?,
         };
         let mut pos = 0;
         while let Some(&c) = rest.get(pos) {
@@ -453,14 +443,14 @@ impl<'a> Context<'a> {
             if item.is_empty() {
                 return Err(value_error("Empty attribute in format string"));
             }
-            let text = PyStr::from_code_points(item.to_vec());
-            obj = if is_attribute {
-                obj.getattr(&text)?
-            } else {
-                match key_index {
-                    Some(i) => obj.getitem(&Key::Index(i))?,
-                    None => obj.getitem(&Key::Name(text))?,
-                }
+            if is_attribute {
+                // Unreachable: `refuse_attribute_fields` rejects every
+                // attribute field that `str.format` could evaluate.
+                return Err(attribute_refused());
+            }
+            obj = match key_index {
+                Some(i) => obj.getitem(&Key::Index(i))?,
+                None => obj.getitem(&Key::Name(PyStr::from_code_points(item.to_vec())))?,
             };
         }
         Ok(obj)
@@ -500,137 +490,52 @@ mod tests {
         }
     }
 
+    /// Expected outcomes taken from the upstream shim on CPython 3.12.
     #[test]
-    fn attribute_fields_match_cpython() {
-        use ExcKind::{AttributeError, TypeError, ValueError};
+    fn attribute_fields_are_refused_in_order() {
+        use ExcKind::{IndexError, TypeError, ValueError};
         let refuse = "pc_format doesn't support attribute access in format fields";
-        let int = |n: i64| vec![Value::int(n)];
+        let one = || vec![Value::int(1)];
         let cases: Vec<(&str, Vec<Value>, ExcKind, &str)> = vec![
+            ("{0.real}{", vec![], TypeError, refuse),
             (
-                "{0.real}{",
-                int(5),
-                ValueError,
-                "Single '{' encountered in format string",
-            ),
-            (
-                "{0.x}{",
-                int(5),
-                AttributeError,
-                "'int' object has no attribute 'x'",
-            ),
-            (
-                "{0.real.x}{",
-                vec![Value::Bool(true)],
-                AttributeError,
-                "'int' object has no attribute 'x'",
-            ),
-            (
-                "{0.bit_length:x}{",
-                int(5),
-                TypeError,
-                "unsupported format string passed to builtin_function_or_method.__format__",
-            ),
-            (
-                "{0.bit_length[0]}{",
-                int(5),
-                TypeError,
-                "'builtin_function_or_method' object is not subscriptable",
-            ),
-            ("{0.x.}", vec![], TypeError, refuse),
-            (
-                "{0[}",
-                vec![],
+                "{0[}{0.x}",
+                one(),
                 ValueError,
                 "expected '}' before end of string",
             ),
-            ("{a.b}", vec![], TypeError, refuse),
+            ("{0}{1}{0.x}", one(), TypeError, refuse),
+            ("{0:{0.x}{!}}", one(), TypeError, refuse),
+            ("{0:{!}}{0.x}", one(), TypeError, refuse),
+            ("{0.}{0.x}", one(), TypeError, refuse),
+            ("{0.x}}", vec![], TypeError, refuse),
             (
-                "{0.\u{e9}}{",
-                vec![Value::Float(1.5)],
-                AttributeError,
-                "'float' object has no attribute '\u{e9}'",
+                "}{0.x}",
+                vec![],
+                ValueError,
+                "Single '}' encountered in format string",
             ),
             (
-                "{0.__class__.x}{",
-                int(1),
-                AttributeError,
-                "type object 'int' has no attribute 'x'",
+                "{0:}}{0.x}",
+                one(),
+                ValueError,
+                "Single '}' encountered in format string",
             ),
             (
-                "{0.__class__[0]}{",
-                int(1),
-                TypeError,
-                "type 'int' is not subscriptable",
-            ),
-            (
-                "{0.__class__:x}{",
-                int(1),
-                TypeError,
-                "unsupported format string passed to type.__format__",
-            ),
-            ("{0:{0.x}}", int(1), TypeError, refuse),
-            (
-                "{0:{1:{0.x}}}",
-                vec![Value::int(1), Value::int(2)],
+                "{0:{0:{1.x}}}",
+                one(),
                 ValueError,
                 "Max string recursion exceeded",
             ),
             (
-                "{0:{0.x}{!}}",
-                int(1),
-                AttributeError,
-                "'int' object has no attribute 'x'",
+                "{0[a]x.y}",
+                vec![],
+                IndexError,
+                "Replacement index 0 out of range for positional args tuple",
             ),
-            (
-                "{0.imag!r:d}{",
-                vec![Value::Float(1.5)],
-                ValueError,
-                "Unknown format code 'd' for object of type 'str'",
-            ),
-            (
-                "{0.count!r:d}{",
-                vec![Value::List(vec![])],
-                ValueError,
-                "Unknown format code 'd' for object of type 'str'",
-            ),
-            (
-                "{0.real:{1}}{",
-                vec![Value::int(1), Value::str("q")],
-                ValueError,
-                "Unknown format code 'q' for object of type 'int'",
-            ),
-            (
-                "{0[0].x}{",
-                vec![Value::List(int(1))],
-                AttributeError,
-                "'int' object has no attribute 'x'",
-            ),
+            ("{0]x.y}", vec![], TypeError, refuse),
+            ("{0!r:{1.x}}", one(), TypeError, refuse),
             ("{.x}", vec![], TypeError, refuse),
-            (
-                "{0.}{",
-                int(1),
-                ValueError,
-                "Empty attribute in format string",
-            ),
-            (
-                "{0!x.real}",
-                int(1),
-                ValueError,
-                "expected ':' after conversion specifier",
-            ),
-            (
-                "{0.__doc__.x}{",
-                int(1),
-                AttributeError,
-                "'str' object has no attribute 'x'",
-            ),
-            (
-                "{0.__hash__}{",
-                vec![Value::List(vec![])],
-                ValueError,
-                "Single '{' encountered in format string",
-            ),
-            ("{0:{a.b}{}}", int(1), TypeError, refuse),
         ];
         for (t, args, kind, msg) in cases {
             assert_eq!(err(t, args), (kind, msg.to_owned()), "{t}");

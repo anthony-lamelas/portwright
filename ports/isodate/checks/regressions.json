@@ -1,0 +1,331 @@
+[
+ {
+  "target": "tzinfo.Utc",
+  "args": [],
+  "kwargs": {}
+ },
+ {
+  "target": "tzinfo.LocalTimezone.utcoffset",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('isodate').LOCAL"
+   },
+   {
+    "t": "python",
+    "v": "__import__('datetime').datetime(1971, 1, 1, 0, 0, 0, 0, tzinfo=__import__('isodate').UTC)"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "tzinfo.LocalTimezone.utcoffset",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('isodate').LOCAL"
+   },
+   {
+    "t": "none"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isotzinfo.build_tzinfo",
+  "args": [
+   {
+    "t": "none"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "duration.fquotmod",
+  "args": [
+   {
+    "t": "decimal",
+    "v": "-30"
+   },
+   {
+    "t": "decimal",
+    "v": "1"
+   },
+   {
+    "t": "decimal",
+    "v": "13"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "duration.fquotmod",
+  "args": [
+   {
+    "t": "decimal",
+    "v": "-3.073"
+   },
+   {
+    "t": "decimal",
+    "v": "13"
+   },
+   {
+    "t": "decimal",
+    "v": "13"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "duration.max_days_in_month",
+  "args": [
+   {
+    "t": "int",
+    "v": "-800"
+   },
+   {
+    "t": "int",
+    "v": "1"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "duration_isoformat",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('isodate').parse_duration('P18Y9M4DT11H9M8S')"
+   },
+   {
+    "t": "str",
+    "v": "P%P"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration",
+  "args": [],
+  "kwargs": {
+   "days": {
+    "t": "int",
+    "v": "0"
+   },
+   "months": {
+    "t": "str",
+    "v": "1e999999999999999999"
+   }
+  }
+ },
+ {
+  "target": "ISO8601Error",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', str((lambda r: (getattr(r[0], '__module__', None), getattr(r[0], '__qualname__', r[0]), r[1:]))(__import__('isodate').UTC.__reduce_ex__(2))))"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "ISO8601Error",
+  "args": [
+   {
+    "t": "python",
+    "v": "__import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', str((lambda o: (o.__dict__.update({'_FixedOffset__offset': __import__('datetime').timedelta(hours=1)}), repr(o), o.utcoffset(None))[1:])(__import__('pickle').loads(__import__('pickle').dumps(__import__('isodate').FixedOffset(2, 30, 'x'), 2)))))"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration",
+  "args": [],
+  "kwargs": {
+   "years": {
+    "t": "python",
+    "v": "10**4999"
+   }
+  }
+ },
+ {
+  "target": "Duration.__mul__",
+  "args": [
+   {
+    "t": "python",
+    "v": "10**6000"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "ISO8601Error",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str((lambda s: [p.findall(s) for p in __import__('isodate').isodates.build_date_regexps(4, False)])('2020-01-02'))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__add__.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(str(__import__('inspect').signature(__import__('isodate').Duration(1).__add__)))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__sub__.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(__import__('isodate').Duration(1).__sub__.__module__)\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__rsub__.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(str(__import__('inspect').signature(__import__('isodate').Duration.__rsub__)))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__mul__.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(repr(__import__('isodate').Duration(1).__mul__.__doc__))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__rmul__.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(str(__import__('inspect').signature(__import__('isodate').Duration(years=2, months=3, days=4).__rmul__)))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isodates.build_date_regexps.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str((lambda s: [(lambda r: r if r is None or isinstance(r, (str, int, tuple, list)) else (lambda m: None if m is None else (m.span(), m.group(0), m.groups(), m.groupdict(), m.lastgroup, m.lastindex, m.re is p, m.string == s, m.pos, m.endpos))(r))(p.split(s)) for p in __import__('isodate').isodates.build_date_regexps()])('2020-01-01'))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isotime.build_time_regexps.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str((lambda s: [(lambda r: r if r is None or isinstance(r, (str, int, tuple, list)) else (lambda m: None if m is None else (m.span(), m.group(0), m.groups(), m.groupdict(), m.lastgroup, m.lastindex, m.re is p, m.string == s, m.pos, m.endpos))(r))(p.match(s)) for p in __import__('isodate').isotime.build_time_regexps()])('12:30:45Z'))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isotzinfo.TZ_RE.match.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str((lambda s: [(lambda p: (lambda m: None if m is None else (m.span(), m[0], m.groups(), m.groups('-'), m.groupdict(), m.groupdict(0), m.lastgroup, m.lastindex, m.regs, m.re is p, m.string, m.pos, m.endpos, [(k, m.group(k), m[k], m.span(k), m.start(k), m.end(k)) for k in p.groupindex], [m.span(i) for i in range(p.groups + 1)], m.expand(r'<\\\\g<0>>'), repr(m)))(p.match(s)))(p) for p in [__import__('isodate').isotzinfo.TZ_RE]])('+01:00'))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isotzinfo.TZ_RE.match",
+  "args": [
+   {
+    "t": "str",
+    "v": "Z"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__radd__.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(repr(__import__('isodate').Duration(1).__radd__.__doc__))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(__import__('isodate').Duration(days=type('M', (type,), {'__name__': property(lambda c: 'Spoof')})('Real', (), {})()))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "parse_date.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(__import__('isodate').parse_date(type('M', (type,), {'__name__': property(lambda c: 'Spoof'), '__module__': property(lambda c: (_ for _ in ()).throw(AttributeError('nomod'))), '__flags__': property(lambda c: 0)})('Real', (), {})()))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "FixedOffset.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(__import__('isodate').FixedOffset(type('M', (type,), {'__name__': property(lambda c: 'Spoof'), '__module__': property(lambda c: (_ for _ in ()).throw(AttributeError('nomod'))), '__flags__': property(lambda c: 0)})('Real', (), {})()))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isotzinfo.TZ_RE.match.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str((lambda m: m and [n for n in ['span', 'start', 'end', 'group', 'groups', 'groupdict', 'lastgroup', 'lastindex', 're', 'string', 'pos', 'endpos', 'expand', 'regs', '__getitem__'] if hasattr(m, n)])(__import__('isodate').isotzinfo.TZ_RE.match('Z')))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "isotzinfo.TZ_RE.match.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(sorted(__import__('isodate').isotzinfo.TZ_RE.groupindex.items()))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ },
+ {
+  "target": "Duration.__name__.__class__",
+  "args": [
+   {
+    "t": "python",
+    "v": "(lambda ns: (exec(\"try:\\n r = str(__import__('isodate').Duration(hours=type('M', (type,), {'__module__': property(lambda c: (_ for _ in ()).throw(AttributeError('nomod'))), '__flags__': property(lambda c: 0)})('Real', (), {})()))\\nexcept BaseException as e:\\n r = 'raised ' + type(e).__qualname__ + ': ' + str(e)\\nr = __import__('re').sub(r' at 0x[0-9a-fA-F]+', ' at 0x', r)\\n\", ns), ns['r'])[1])({})"
+   }
+  ],
+  "kwargs": {}
+ }
+]

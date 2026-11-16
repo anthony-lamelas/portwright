@@ -11,6 +11,7 @@ from pathlib import Path
 from portwright.gates import GateResult
 from portwright.gates.rust_source import RustFile, call_args, literal, read_rust
 from portwright.gates.strict_bindings import bindings_problems, feature_problems, macro_problems
+from portwright.scaffold import SUBMODULES_FILE, SUBMODULES_RS
 
 # Common building blocks. Anything else needs an approved request, which also blocks
 # pulling in an existing Rust port of the library being ported.
@@ -376,7 +377,8 @@ def integrity_gate(
     for path, strict in sorted(strict_files.items()):
         relative = path.relative_to(root)
         file = files[path]
-        problems += _import_problems(relative, file, module, strict)
+        if not (path.name == SUBMODULES_FILE and path.read_text(encoding="utf-8", errors="replace") == SUBMODULES_RS and not strict):
+            problems += _import_problems(relative, file, module, strict)  # the harness's own file may import sys (#64)
         for label, pattern in _EXEC_PATTERNS.items():
             if pattern.search(file.src):
                 problems.append(f"{relative}: {label}")

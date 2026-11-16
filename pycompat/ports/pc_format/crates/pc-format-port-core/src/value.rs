@@ -191,25 +191,62 @@ impl Value {
     }
 }
 
+/// Containers nested deeper than this raise `RecursionError`, like
+/// upstream's recursive `_check_builtin` under the default recursion limit
+/// (about 1000 frames). Bounds every later recursion over the value too.
+const MAX_DEPTH: usize = 900;
+
 /// The `TypeError` `pc_format`'s guard raises when `value` (or something
 /// inside it) isn't a supported built-in, checking depth-first: for a dict,
-/// each key before its value.
+/// each key before its value. A set or frozenset holding a str or bytes
+/// (directly or inside a tuple or frozenset) raises after its items pass.
 ///
 /// # Errors
-/// `TypeError("pc_format supports built-in types only, not <name>")`.
+/// `TypeError("pc_format supports built-in types only, not <name>")`,
+/// `TypeError("pc_format doesn't support sets of str or bytes, ...")`, or
+/// `RecursionError` for containers nested more than 900 deep.
 pub fn check_builtin(value: &Value) -> PcResult<()> {
+    check_nested(value, 1)
+}
+
+/// [`check_builtin`] for a value with `depth - 1` containers around it.
+fn check_nested(value: &Value, depth: usize) -> PcResult<()> {
+    if depth > MAX_DEPTH {
+        return Err(PyError::new(
+            ExcKind::RecursionError,
+            "maximum recursion depth exceeded",
+        ));
+    }
+    let check = |item: &Value| check_nested(item, depth + 1);
     match value {
         Value::Foreign(name) => Err(PyError::type_error(format!(
             "pc_format supports built-in types only, not {name}"
         ))),
         Value::Dict(pairs) => pairs.iter().try_for_each(|(k, v)| {
-            check_builtin(k)?;
-            check_builtin(v)
+            check(k)?;
+            check(v)
         }),
-        Value::Tuple(items) | Value::List(items) | Value::Set(items) | Value::FrozenSet(items) => {
-            items.iter().try_for_each(check_builtin)
+        Value::Tuple(items) | Value::List(items) => items.iter().try_for_each(check),
+        Value::Set(items) | Value::FrozenSet(items) => {
+            items.iter().try_for_each(check)?;
+            if items.iter().any(hash_randomized) {
+                return Err(PyError::type_error(
+                    "pc_format doesn't support sets of str or bytes, whose order changes between processes",
+                ));
+            }
+            Ok(())
         }
         _ => Ok(()),
+    }
+}
+
+/// Upstream's `_hash_randomized`: whether the value's hash depends on the
+/// process's hash seed (a str or bytes, or a tuple or frozenset holding one).
+fn hash_randomized(value: &Value) -> bool {
+    match value {
+        Value::Str(_) | Value::Bytes(_) => true,
+        Value::Tuple(items) | Value::FrozenSet(items) => items.iter().any(hash_randomized),
+        _ => false,
     }
 }
 
@@ -244,7 +281,7 @@ pub enum ExcKind {
     MemoryError,
     /// `RecursionError`.
     RecursionError,
-    /// `NotImplementedError`: only for APIs not ported yet.
+    /// `NotImplementedError`: never raised by the core; kept for the binding.
     NotImplementedError,
 }
 
@@ -318,15 +355,6 @@ impl PyError {
             arg: key,
         }
     }
-
-    /// The error an API raises until its task is ported.
-    #[must_use]
-    pub fn not_ported(api: &str) -> Self {
-        Self::new(
-            ExcKind::NotImplementedError,
-            format!("{api} is not ported yet"),
-        )
-    }
 }
 
 impl fmt::Display for PyError {
@@ -339,3 +367,19 @@ impl fmt::Display for PyError {
 }
 
 impl std::error::Error for PyError {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn nested(depth: usize) -> Value {
+        (1..depth).fold(Value::None, |v, _| Value::List(vec![v]))
+    }
+
+    #[test]
+    fn guard_caps_nesting_depth() {
+        assert_eq!(check_builtin(&nested(MAX_DEPTH)), Ok(()));
+        let err = check_builtin(&nested(MAX_DEPTH + 1)).unwrap_err();
+        assert_eq!(err.kind, ExcKind::RecursionError);
+    }
+}

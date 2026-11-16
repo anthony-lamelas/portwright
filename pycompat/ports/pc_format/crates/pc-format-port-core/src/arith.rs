@@ -290,11 +290,16 @@ fn index(v: &Value) -> PcResult<BigInt> {
     match v {
         Value::Bool(b) => Ok(BigInt::from(u8::from(*b))),
         Value::Int(n) => Ok(n.clone()),
-        other => Err(PyError::type_error(format!(
-            "'{}' object cannot be interpreted as an integer",
-            other.type_name()
-        ))),
+        other => Err(index_type_error(other)),
     }
+}
+
+/// The `TypeError` [`index`] raises for a non-integer.
+fn index_type_error(v: &Value) -> PyError {
+    PyError::type_error(format!(
+        "'{}' object cannot be interpreted as an integer",
+        v.type_name()
+    ))
 }
 
 /// `num / den` rounded to the nearest integer, ties to even (`den > 0`).
@@ -438,7 +443,7 @@ pub fn round_number_api(x: &Value, ndigits: &Value) -> PcResult<Value> {
                     n.to_i64()
                         .unwrap_or(if n.is_negative() { i64::MIN } else { i64::MAX })
                 }
-                other => return index(other).map(|_| Value::None),
+                other => return Err(index_type_error(other)),
             };
             if !f.is_finite() || nd > NDIGITS_MAX {
                 Ok(Value::Float(f))
@@ -491,5 +496,49 @@ mod tests {
             round_number_api(&Value::int(25), &Value::int(-1)),
             Ok(Value::int(20))
         );
+    }
+
+    fn big(n: u32) -> BigInt {
+        BigInt::one() << n
+    }
+
+    fn div_bits(a: BigInt, b: BigInt) -> u64 {
+        f(true_div_api(&Value::Int(a), &Value::Int(b))).to_bits()
+    }
+
+    #[test]
+    fn true_div_subnormal_and_edges() {
+        let ten = BigInt::from(10);
+        assert_eq!(div_bits(BigInt::from(3), big(1075)), 0x2);
+        assert_eq!(div_bits(big(60) + 1, big(1130)), 0x10);
+        assert_eq!(
+            div_bits(BigInt::one(), num_traits::pow(ten.clone(), 320)),
+            0x7e8
+        );
+        assert_eq!(div_bits(BigInt::from(7), big(1070) * 3), 0x25);
+        assert_eq!(
+            div_bits(-(big(80) + BigInt::from(3)), big(1100) + 5),
+            0x8030_0000_0000_0000
+        );
+        assert_eq!(
+            div_bits(num_traits::pow(ten.clone(), 400), num_traits::pow(ten, 92)),
+            0x7fe1_ccf3_85eb_c8a0
+        );
+        assert_eq!(
+            div_bits(big(1024) - big(971), BigInt::one()),
+            0x7fef_ffff_ffff_ffff
+        );
+        assert!(true_div_api(&Value::Int(big(1024) - big(970)), &Value::int(1)).is_err());
+    }
+
+    #[test]
+    fn round_float_edges() {
+        let r = |x: f64, n: i64| round_number_api(&Value::Float(x), &Value::int(n));
+        assert!(r(f64::MAX, -308).is_err());
+        assert_eq!(f(r(5e-324, 323)).to_bits(), 0);
+        assert_eq!(f(r(2.5e-323, 323)).to_bits(), 4);
+        assert_eq!(f(r(-0.5, 0)).to_bits(), 0x8000_0000_0000_0000);
+        assert_eq!(f(r(123.456, -1)).to_bits(), 0x405e_0000_0000_0000);
+        assert_eq!(f(r(0.285, 2)).to_bits(), 0x3fd1_eb85_1eb8_51ec);
     }
 }

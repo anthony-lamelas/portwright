@@ -75,7 +75,13 @@ impl Converter {
         &mut self,
         iter: impl Iterator<Item = Bound<'py, PyAny>>,
     ) -> PyResult<Vec<Value>> {
-        iter.map(|item| self.convert(&item)).collect()
+        // Pre-sized: collecting `PyResult`s starts from an empty `Vec`
+        // and regrows it.
+        let mut values = Vec::with_capacity(iter.size_hint().0);
+        for item in iter {
+            values.push(self.convert(&item)?);
+        }
+        Ok(values)
     }
 
     fn convert(&mut self, obj: &Bound<'_, PyAny>) -> PyResult<Value> {
@@ -97,23 +103,6 @@ impl Converter {
         }
         Ok(value)
     }
-}
-
-/// Converts a Python object to a [`Value`]. Only exact built-in types are
-/// converted; anything else (including subclasses) becomes
-/// [`Value::Foreign`] carrying `type(obj).__name__`.
-fn to_core(obj: &Bound<'_, PyAny>) -> PyResult<Value> {
-    Converter::default().convert(obj)
-}
-
-/// Converts the arguments of one call, in order, sharing the depth state.
-fn args_to_core<const N: usize>(objs: [&Bound<'_, PyAny>; N]) -> PyResult<[Value; N]> {
-    let mut conv = Converter::default();
-    let mut out: [Value; N] = std::array::from_fn(|_| Value::None);
-    for (slot, obj) in out.iter_mut().zip(objs) {
-        *slot = conv.convert(obj)?;
-    }
-    Ok(out)
 }
 
 /// Reads an exact `int`. Values that fit an `i64` skip the byte-array
@@ -159,11 +148,11 @@ fn to_core_with(obj: &Bound<'_, PyAny>, conv: &mut Converter) -> PyResult<Value>
     } else if obj.is_exact_instance_of::<PyFrozenSet>() {
         Value::FrozenSet(conv.items(obj.cast::<PyFrozenSet>()?.iter())?)
     } else if obj.is_exact_instance_of::<PyDict>() {
-        let pairs = obj
-            .cast::<PyDict>()?
-            .iter()
-            .map(|(k, v)| Ok((conv.convert(&k)?, conv.convert(&v)?)))
-            .collect::<PyResult<Vec<_>>>()?;
+        let entries = obj.cast::<PyDict>()?.iter();
+        let mut pairs = Vec::with_capacity(entries.size_hint().0);
+        for (k, v) in entries {
+            pairs.push((conv.convert(&k)?, conv.convert(&v)?));
+        }
         Value::Dict(pairs)
     } else {
         let name = obj.get_type().name()?;
@@ -264,35 +253,213 @@ fn finish<'py>(py: Python<'py>, result: PcResult<Value>) -> PyResult<Bound<'py, 
 
 // ---------------------------------------------------------------- API
 
-macro_rules! unary {
-    ($name:ident) => {
-        #[pyfunction]
-        fn $name<'py>(x: &Bound<'py, PyAny>) -> PyResult<Bound<'py, PyAny>> {
-            let py = x.py();
-            let x = to_core(x)?;
-            finish(py, core::$name(&x))
+/// A Python `def` signature: parameter names, of which the first
+/// `required` have no default.
+struct Signature {
+    name: &'static str,
+    params: &'static [&'static str],
+    required: usize,
+}
+
+/// Builds a `TypeError` whose message may carry lone surrogates.
+fn type_error(py: Python<'_>, code_points: Vec<u32>) -> PyErr {
+    to_py_err(
+        py,
+        PyError {
+            kind: ExcKind::TypeError,
+            arg: Value::Str(PyStr::from_code_points(code_points)),
+        },
+    )
+}
+
+fn push_str(out: &mut Vec<u32>, text: &str) {
+    out.extend(text.chars().map(u32::from));
+}
+
+/// CPython's `missing_arguments` name list: `'a'`, `'a' and 'b'`,
+/// `'a', 'b', and 'c'`.
+fn join_names(names: &[&str]) -> String {
+    let quoted: Vec<String> = names.iter().map(|n| format!("'{n}'")).collect();
+    match quoted.as_slice() {
+        [] => String::new(),
+        [one] => one.clone(),
+        [a, b] => format!("{a} and {b}"),
+        [init @ .., last] => format!("{}, and {last}", init.join(", ")),
+    }
+}
+
+/// Upstream's `_builtins_only` wrapper followed by the wrapped `def`'s
+/// argument binding: every positional value, then every keyword value in
+/// call order, goes through the builtin guard; only then are arity and
+/// keyword errors raised, in CPython's `initialize_locals` order.
+fn guarded_bind(
+    py: Python<'_>,
+    sig: &Signature,
+    pos: &Bound<'_, PyTuple>,
+    kw: Option<&Bound<'_, PyDict>>,
+) -> PyResult<Vec<Option<Value>>> {
+    let mut conv = Converter::default();
+    let pos_values = conv.items(pos.iter())?;
+    let mut kw_values = Vec::new();
+    if let Some(kw) = kw {
+        for (key, item) in kw.iter() {
+            let key = py_str_to_core(key.cast::<PyString>()?)?;
+            kw_values.push((key, conv.convert(&item)?));
         }
+    }
+    let all: Vec<&Value> = pos_values
+        .iter()
+        .chain(kw_values.iter().map(|(_, v)| v))
+        .collect();
+    core::check_builtins(&all).map_err(|err| to_py_err(py, err))?;
+
+    let name = sig.name;
+    let given = pos_values.len();
+    let mut bound: Vec<Option<Value>> = vec![None; sig.params.len()];
+    for (slot, value) in bound.iter_mut().zip(pos_values) {
+        *slot = Some(value);
+    }
+    for (key, value) in kw_values {
+        let index = sig.params.iter().position(|p| {
+            p.chars()
+                .map(u32::from)
+                .eq(key.code_points().iter().copied())
+        });
+        let Some(index) = index else {
+            let mut msg = Vec::new();
+            push_str(
+                &mut msg,
+                &format!("{name}() got an unexpected keyword argument '"),
+            );
+            msg.extend_from_slice(key.code_points());
+            push_str(&mut msg, "'");
+            return Err(type_error(py, msg));
+        };
+        let Some(slot) = bound.get_mut(index) else {
+            return Err(PyTypeError::new_err(name));
+        };
+        if slot.is_some() {
+            return Err(PyTypeError::new_err(format!(
+                "{name}() got multiple values for argument '{}'",
+                sig.params.get(index).copied().unwrap_or_default()
+            )));
+        }
+        *slot = Some(value);
+    }
+    let count = sig.params.len();
+    if given > count {
+        let defaults = count - sig.required;
+        let (range, plural) = if defaults > 0 {
+            (format!("from {} to {count}", sig.required), "s")
+        } else {
+            (count.to_string(), if count == 1 { "" } else { "s" })
+        };
+        let verb = if given == 1 { "was" } else { "were" };
+        return Err(PyTypeError::new_err(format!(
+            "{name}() takes {range} positional argument{plural} but {given} {verb} given"
+        )));
+    }
+    check_missing(sig, &bound)?;
+    Ok(bound)
+}
+
+/// CPython's "missing required positional argument" `TypeError`, raised
+/// after every other binding error.
+fn check_missing(sig: &Signature, bound: &[Option<Value>]) -> PyResult<()> {
+    let missing: Vec<&str> = sig
+        .params
+        .iter()
+        .zip(bound)
+        .take(sig.required)
+        .filter(|(_, b)| b.is_none())
+        .map(|(p, _)| *p)
+        .collect();
+    if !missing.is_empty() {
+        let plural = if missing.len() == 1 { "" } else { "s" };
+        return Err(PyTypeError::new_err(format!(
+            "{}() missing {} required positional argument{plural}: {}",
+            sig.name,
+            missing.len(),
+            join_names(&missing)
+        )));
+    }
+    Ok(())
+}
+
+/// Binds the call and returns exactly `N` slots (`None` = not passed).
+fn bind_n<const N: usize>(
+    py: Python<'_>,
+    sig: &Signature,
+    pos: &Bound<'_, PyTuple>,
+    kw: Option<&Bound<'_, PyDict>>,
+) -> PyResult<[Option<Value>; N]> {
+    let no_keywords = kw.is_none_or(|kw| kw.is_empty());
+    if no_keywords && pos.len() <= N {
+        // Common case, same steps as `guarded_bind` without its scratch
+        // vectors: convert every positional, guard them in order, then
+        // report missing parameters.
+        let mut conv = Converter::default();
+        let mut bound: [Option<Value>; N] = std::array::from_fn(|_| None);
+        for (slot, item) in bound.iter_mut().zip(pos.iter()) {
+            *slot = Some(conv.convert(&item)?);
+        }
+        for value in bound.iter().flatten() {
+            core::check_builtin(value).map_err(|err| to_py_err(py, err))?;
+        }
+        check_missing(sig, &bound)?;
+        return Ok(bound);
+    }
+    let bound = guarded_bind(py, sig, pos, kw)?;
+    <[Option<Value>; N]>::try_from(bound).map_err(|_| PyTypeError::new_err(sig.name))
+}
+
+macro_rules! api {
+    ($name:ident, [$($param:ident),+], $required:expr, |$py:ident, $slots:ident| $body:expr) => {
+        #[pyfunction]
+        #[pyo3(signature = (*pos, **kw))]
+        fn $name<'py>(
+            pos: &Bound<'py, PyTuple>,
+            kw: Option<&Bound<'py, PyDict>>,
+        ) -> PyResult<Bound<'py, PyAny>> {
+            const SIG: Signature = Signature {
+                name: stringify!($name),
+                params: &[$(stringify!($param)),+],
+                required: $required,
+            };
+            let $py = pos.py();
+            let $slots = bind_n($py, &SIG, pos, kw)?;
+            finish($py, $body)
+        }
+    };
+}
+
+/// Every required slot is filled once binding succeeds.
+fn req(slot: Option<Value>) -> Value {
+    slot.unwrap_or(Value::None)
+}
+
+macro_rules! unary {
+    ($name:ident, $p:ident) => {
+        api!($name, [$p], 1, |py, slots| {
+            let [x] = slots;
+            core::$name(&req(x))
+        });
     };
 }
 
 macro_rules! binary {
     ($name:ident, $a:ident, $b:ident) => {
-        #[pyfunction]
-        fn $name<'py>(
-            $a: &Bound<'py, PyAny>,
-            $b: &Bound<'py, PyAny>,
-        ) -> PyResult<Bound<'py, PyAny>> {
-            let py = $a.py();
-            let [$a, $b] = args_to_core([$a, $b])?;
-            finish(py, core::$name(&$a, &$b))
-        }
+        api!($name, [$a, $b], 2, |py, slots| {
+            let [a, b] = slots;
+            core::$name(&req(a), &req(b))
+        });
     };
 }
 
-unary!(float_repr);
-unary!(int_str);
-unary!(parse_float);
-unary!(int_to_float);
+unary!(float_repr, x);
+unary!(int_str, n);
+unary!(parse_float, text);
+unary!(int_to_float, n);
 binary!(format_value, value, spec);
 binary!(percent_format, template, values);
 binary!(floor_div, a, b);
@@ -300,126 +467,24 @@ binary!(modulo, a, b);
 binary!(div_mod, a, b);
 binary!(true_div, a, b);
 
-#[pyfunction]
-#[pyo3(signature = (x, ndigits=None))]
-fn round_number<'py>(
-    x: &Bound<'py, PyAny>,
-    ndigits: Option<&Bound<'py, PyAny>>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let py = x.py();
-    let mut conv = Converter::default();
-    let x = conv.convert(x)?;
-    let ndigits = ndigits
-        .map(|n| conv.convert(n))
-        .transpose()?
-        .unwrap_or(Value::None);
-    finish(py, core::round_number(&x, &ndigits))
-}
+api!(round_number, [x, ndigits], 1, |py, slots| {
+    let [x, ndigits] = slots;
+    core::round_number(&req(x), &ndigits.unwrap_or(Value::None))
+});
 
-/// Binds `pos` and `kw` to `params` the way a Python `def` does, so that an
-/// explicit `None` stays distinguishable from a missing argument.
-fn bind_args<'py>(
-    name: &str,
-    params: &[&str],
-    required: usize,
-    pos: &Bound<'py, PyTuple>,
-    kw: Option<&Bound<'py, PyDict>>,
-) -> PyResult<Vec<Option<Bound<'py, PyAny>>>> {
-    if pos.len() > params.len() {
-        return Err(PyTypeError::new_err(format!(
-            "{name}() takes from {required} to {} positional arguments but {} were given",
-            params.len(),
-            pos.len()
-        )));
-    }
-    let mut bound: Vec<Option<Bound<'py, PyAny>>> = vec![None; params.len()];
-    for (slot, item) in bound.iter_mut().zip(pos.iter()) {
-        *slot = Some(item);
-    }
-    if let Some(kw) = kw {
-        for (key, item) in kw.iter() {
-            let key = key.cast::<PyString>()?.to_str()?;
-            let Some(index) = params.iter().position(|p| *p == key) else {
-                return Err(PyTypeError::new_err(format!(
-                    "{name}() got an unexpected keyword argument '{key}'"
-                )));
-            };
-            if bound[index].is_some() {
-                return Err(PyTypeError::new_err(format!(
-                    "{name}() got multiple values for argument '{key}'"
-                )));
-            }
-            bound[index] = Some(item);
-        }
-    }
-    let missing: Vec<String> = params[..required]
-        .iter()
-        .zip(&bound)
-        .filter(|(_, b)| b.is_none())
-        .map(|(p, _)| format!("'{p}'"))
-        .collect();
-    if !missing.is_empty() {
-        let plural = if missing.len() == 1 { "" } else { "s" };
-        return Err(PyTypeError::new_err(format!(
-            "{name}() missing {} required positional argument{plural}: {}",
-            missing.len(),
-            missing.join(" and ")
-        )));
-    }
-    Ok(bound)
-}
+api!(parse_int, [text, base], 1, |py, slots| {
+    let [text, base] = slots;
+    core::parse_int(&req(text), &base.unwrap_or(Value::int(10)))
+});
 
-#[pyfunction]
-#[pyo3(signature = (*pos, **kw))]
-fn parse_int<'py>(
-    pos: &Bound<'py, PyTuple>,
-    kw: Option<&Bound<'py, PyDict>>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let py = pos.py();
-    let bound = bind_args("parse_int", &["text", "base"], 1, pos, kw)?;
-    let [text, base] = <[_; 2]>::try_from(bound).map_err(|_| PyTypeError::new_err("parse_int"))?;
-    let mut conv = Converter::default();
-    let text = text
-        .as_ref()
-        .map(|o| conv.convert(o))
-        .transpose()?
-        .unwrap_or(Value::None);
-    let base = base
-        .as_ref()
-        .map(|o| conv.convert(o))
-        .transpose()?
-        .unwrap_or(Value::int(10));
-    finish(py, core::parse_int(&text, &base))
-}
-
-#[pyfunction]
-#[pyo3(signature = (*pos, **kw))]
-fn str_format<'py>(
-    pos: &Bound<'py, PyTuple>,
-    kw: Option<&Bound<'py, PyDict>>,
-) -> PyResult<Bound<'py, PyAny>> {
-    let py = pos.py();
-    let bound = bind_args("str_format", &["template", "args", "kwargs"], 1, pos, kw)?;
-    let [template, args, kwargs] =
-        <[_; 3]>::try_from(bound).map_err(|_| PyTypeError::new_err("str_format"))?;
-    let mut conv = Converter::default();
-    let template = template
-        .as_ref()
-        .map(|o| conv.convert(o))
-        .transpose()?
-        .unwrap_or(Value::None);
-    let args = args
-        .as_ref()
-        .map(|o| conv.convert(o))
-        .transpose()?
-        .unwrap_or(Value::Tuple(Vec::new()));
-    let kwargs = kwargs
-        .as_ref()
-        .map(|o| conv.convert(o))
-        .transpose()?
-        .unwrap_or(Value::None);
-    finish(py, core::str_format(&template, &args, &kwargs))
-}
+api!(str_format, [template, args, kwargs], 1, |py, slots| {
+    let [template, args, kwargs] = slots;
+    core::str_format(
+        &req(template),
+        &args.unwrap_or(Value::Tuple(Vec::new())),
+        &kwargs.unwrap_or(Value::None),
+    )
+});
 
 #[pymodule(name = "pc_format")]
 fn module_init(module: &Bound<'_, PyModule>) -> PyResult<()> {

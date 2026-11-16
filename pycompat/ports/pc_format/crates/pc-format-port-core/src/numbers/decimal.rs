@@ -185,8 +185,9 @@ pub(crate) fn u64_to_ascii(mut v: u64, buf: &mut [u8; 20]) -> &[u8] {
 /// Writes `v < 10**9` as exactly nine ASCII digits.
 fn write_nine(v: u32, buf: &mut [u8; CHUNK_DIGITS]) {
     let pair = |n: u32| -> [u8; 2] {
+        debug_assert!(n < 100);
         let i = usize::try_from(n * 2).unwrap_or(0);
-        [PAIRS[i % 200], PAIRS[(i + 1) % 200]]
+        [PAIRS[i], PAIRS[i + 1]]
     };
     let top = v / 100_000_000;
     let low = v % 100_000_000;

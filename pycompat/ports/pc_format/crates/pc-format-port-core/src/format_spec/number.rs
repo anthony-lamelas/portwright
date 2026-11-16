@@ -356,7 +356,7 @@ pub fn int_magnitude_digits(n: &BigInt, base: u32) -> PcResult<String> {
 
 /// The lowercase digits of `m` in `base` (2, 8, 10 or 16), written to the
 /// end of `buf` (64 bytes hold any `u64` in base 2).
-fn u64_digits(mut m: u64, base: u32, buf: &mut [u8; 64]) -> &[u8] {
+pub(crate) fn u64_digits(mut m: u64, base: u32, buf: &mut [u8; 64]) -> &[u8] {
     const DIGITS: &[u8; 16] = b"0123456789abcdef";
     let mut start = buf.len();
     // Shifts for the power-of-two bases; constant divisors for base 10.
@@ -500,6 +500,11 @@ fn dtoa_digits(abs: f64, mode: u8, ndigits: usize) -> (Digits, i64) {
             return found;
         }
     }
+    if mode == 2 {
+        if let Some(found) = significant_digits_fast(abs, ndigits.max(1)) {
+            return found;
+        }
+    }
     let (digits, decpt) = dtoa_digits_vec(abs, mode, ndigits);
     (Digits::Heap(digits), decpt)
 }
@@ -599,18 +604,152 @@ fn fixed_digits_fast(abs: f64, ndigits: usize) -> Option<(Digits, i64)> {
     Some((Digits::Inline { buf, start }, decpt))
 }
 
-/// Port of CPython's `PyOS_double_to_string` (`format_float_short`).
-/// `code` is one of `e E f F g G r`; `r` requires `precision == 0`.
-///
-/// Returns an empty string if the output can't be allocated; use
-/// [`try_double_to_string`] to see that as `MemoryError`.
-#[must_use]
-pub fn double_to_string(val: f64, code: char, precision: usize, flags: DtoaFlags) -> String {
-    try_double_to_string(val, code, precision, flags).unwrap_or_default()
+/// `10**i` for every `i` whose power fits a `u128`.
+const POW10_U128: [u128; 39] = {
+    let mut table = [1_u128; 39];
+    let mut i = 1;
+    while i < 39 {
+        table[i] = table[i - 1] * 10;
+        i += 1;
+    }
+    table
+};
+
+/// Number of decimal digits in `v` (1 for 0). Compares against powers of
+/// ten: `u128` division is a slow library call.
+fn decimal_len(v: u128) -> u32 {
+    let below = POW10_U128.iter().skip(1).take_while(|&&p| p <= v).count();
+    u32::try_from(below).unwrap_or(38) + 1
 }
 
-/// [`double_to_string`], failing with `MemoryError` when the output can't
-/// be allocated.
+/// Writes `q` (non-zero, trailing zeros removed) into an inline buffer.
+fn inline_digits(q: u128) -> Option<Digits> {
+    let mut buf = [0_u8; 39];
+    let mut start = buf.len();
+    match u64::try_from(q) {
+        // Constant `u64` divisions are much cheaper than `u128` ones.
+        Ok(mut v) => loop {
+            start = start.checked_sub(1)?;
+            *buf.get_mut(start)? = b'0' + u8::try_from(v % 10).ok()?;
+            v /= 10;
+            if v == 0 {
+                break;
+            }
+        },
+        Err(_) => {
+            let mut v = q;
+            loop {
+                start = start.checked_sub(1)?;
+                *buf.get_mut(start)? = b'0' + u8::try_from(v % 10).ok()?;
+                v /= 10;
+                if v == 0 {
+                    break;
+                }
+            }
+        }
+    }
+    Some(Digits::Inline { buf, start })
+}
+
+/// Removes trailing decimal zeros from a non-zero `q`.
+fn strip_trailing_zeros(q: u128) -> u128 {
+    match u64::try_from(q) {
+        Ok(mut v) => {
+            while v.is_multiple_of(10) {
+                v /= 10;
+            }
+            u128::from(v)
+        }
+        Err(_) => {
+            let mut v = q;
+            while v.is_multiple_of(10) {
+                v /= 10;
+            }
+            v
+        }
+    }
+}
+
+/// `(q / d, q % d)` for `d > 0`, in `u64` when both fit.
+fn div_rem_u128(q: u128, d: u128) -> (u128, u128) {
+    match (u64::try_from(q), u64::try_from(d)) {
+        (Ok(q), Ok(d)) => (u128::from(q / d), u128::from(q % d)),
+        _ => {
+            let quot = q / d;
+            (quot, q - quot * d)
+        }
+    }
+}
+
+/// Mode 2 digits (`n >= 1` significant digits, correctly rounded half to
+/// even) from exact `u128` arithmetic on the binary value of `abs`,
+/// skipping Rust's `{:.N e}` formatting. `None` when that doesn't apply
+/// (zero, subnormals, or values whose scaled form doesn't fit).
+fn significant_digits_fast(abs: f64, n: usize) -> Option<(Digits, i64)> {
+    if abs == 0.0 || !abs.is_finite() || abs.is_sign_negative() || n > 36 {
+        return None;
+    }
+    let n = u32::try_from(n).ok()?;
+    let bits = abs.to_bits();
+    let biased = (bits >> 52) & 0x7ff;
+    if biased == 0 {
+        return None;
+    }
+    let m = (bits & ((1_u64 << 52) - 1)) | (1_u64 << 52);
+    let e = i64::try_from(biased).ok()? - 1075;
+    // Scale by 10**nd so the integer part has at least `n` digits. The
+    // estimate floor(E * log10(2)) of floor(log10(abs)), for
+    // abs in [2**E, 2**(E+1)), is never too high and at most one too low;
+    // that only adds a digit (78913 / 2**18 is log10(2) to well within
+    // the error that matters for |E| < 1100).
+    let k_est = ((e + 52) * 78_913) >> 18;
+    let nd = (i64::from(n) + 1 - k_est).max(0);
+    if nd > 22 {
+        return None;
+    }
+    let nd_u32 = u32::try_from(nd).ok()?;
+    // m < 2**53 and 10**22 < 2**74, so the product fits.
+    let scaled = u128::from(m) * *POW10_U128.get(usize::try_from(nd_u32).ok()?)?;
+    // abs * 10**nd == q0 + r0 / 2**shift exactly.
+    let (q0, r0, shift) = if e >= 0 {
+        let e = u32::try_from(e).ok()?;
+        if e >= scaled.leading_zeros() {
+            return None;
+        }
+        (scaled << e, 0_u128, 0_u32)
+    } else {
+        let shift = u32::try_from(-e).ok()?;
+        if shift >= 128 {
+            return None;
+        }
+        (scaled >> shift, scaled & ((1_u128 << shift) - 1), shift)
+    };
+    let d = decimal_len(q0);
+    if q0 == 0 || d < n {
+        return None;
+    }
+    let p = d - n;
+    let (mut q, round_up) = if p == 0 {
+        let up = shift > 0 && {
+            let half = 1_u128 << (shift - 1);
+            r0 > half || (r0 == half && q0 & 1 == 1)
+        };
+        (q0, up)
+    } else {
+        let pow = *POW10_U128.get(usize::try_from(p).ok()?)?;
+        let (q, rem) = div_rem_u128(q0, pow);
+        let twice = rem.checked_mul(2)?;
+        (q, twice > pow || (twice == pow && (r0 > 0 || q & 1 == 1)))
+    };
+    if round_up {
+        q += 1;
+    }
+    let decpt = i64::from(decimal_len(q)) + i64::from(p) - nd;
+    Some((inline_digits(strip_trailing_zeros(q))?, decpt))
+}
+
+/// Port of CPython's `PyOS_double_to_string` (`format_float_short`).
+/// `code` is one of `e E f F g G r`; `r` requires `precision == 0`.
 ///
 /// # Errors
 /// `MemoryError` for an output too large to allocate.
@@ -1106,5 +1245,74 @@ mod grouping_tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod significant_digits_tests {
+    use super::*;
+
+    fn check(x: f64, n: usize) {
+        if let Some((digits, decpt)) = significant_digits_fast(x, n) {
+            let (want, want_decpt) = dtoa_digits_vec(x, 2, n);
+            assert_eq!(
+                (&*digits, decpt),
+                (want.as_slice(), want_decpt),
+                "{x:e} n={n}"
+            );
+        }
+    }
+
+    /// The u128 fast path gives the same digits as Rust's exact `{:.N e}`.
+    #[test]
+    fn matches_exact_formatting() {
+        let cases = std::env::var("PCF_SIG_CASES")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(200_000_u64);
+        let mut state = 0x2545_f491_4f6c_dd1d_u64;
+        let mut next = || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for _ in 0..cases {
+            let r = next();
+            // Random bits, plus values near powers of ten and halfway points.
+            let x = match r % 4 {
+                0 => f64::from_bits(r >> 1),
+                1 => 10_f64.powi(i32::try_from(next() % 60).unwrap_or(0) - 30),
+                2 => {
+                    let base = f64::from(u32::try_from(next() % 100_000).unwrap_or(0));
+                    (base + 0.5) / 10_f64.powi(i32::try_from(next() % 8).unwrap_or(0))
+                }
+                _ => f64::from_bits((next() % (1 << 52)) | ((1_023 + (next() % 140) - 70) << 52)),
+            };
+            let x = x.abs();
+            let n = usize::try_from(next() % 40).unwrap_or(0) + 1;
+            check(x, n);
+            check(f64::from_bits(x.to_bits().wrapping_add(1)), n);
+            check(f64::from_bits(x.to_bits().wrapping_sub(1)), n);
+        }
+        for x in [
+            6.022_140_76e23,
+            2.675,
+            0.5,
+            1.0,
+            9.5,
+            0.095,
+            0.094,
+            0.0996,
+            1e22,
+            1e23,
+            2.5e-5,
+        ] {
+            for n in 1..=40 {
+                check(x, n);
+            }
+        }
+        assert!(significant_digits_fast(6.022_140_76e23, 4).is_some());
+        assert!(significant_digits_fast(2.675, 3).is_some());
     }
 }

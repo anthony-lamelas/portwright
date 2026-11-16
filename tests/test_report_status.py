@@ -79,3 +79,21 @@ def test_a_run_stopped_before_porting_still_gets_a_report(tmp_path):
     config = SimpleNamespace(lib="toy", url="https://example.invalid")
     written = write_report(paths, config, {"gates": {}, "stopped": "the original's own tests don't pass here"}, {}, {}, {})
     assert "stopped early" in written.read_text()
+
+
+def test_rulings_by_a_person_are_in_the_report(tmp_path):
+    """#67: isodate's accepted introspection difference is a ruling, not an approved signature."""
+    public, control = tmp_path / "public", tmp_path / "control"
+    public.mkdir()
+    control.mkdir()
+    (control / "human_decisions.md").write_text("- Accepted difference: operators aren't Python functions.\n")
+    paths = SimpleNamespace(public=public, control=control)
+    text = build_markdown(paths, SimpleNamespace(lib="toy", url="https://example.invalid"), {"gates": {}}, {}, {}, {})
+    assert "## Rulings by a person" in text and "operators aren't Python functions" in text
+
+
+def test_a_run_without_rulings_has_no_rulings_section(tmp_path):
+    (tmp_path / "public").mkdir()
+    (tmp_path / "control").mkdir()
+    paths = SimpleNamespace(public=tmp_path / "public", control=tmp_path / "control")
+    assert "Rulings by a person" not in build_markdown(paths, SimpleNamespace(lib="toy", url="https://example.invalid"), {"gates": {}}, {}, {}, {})

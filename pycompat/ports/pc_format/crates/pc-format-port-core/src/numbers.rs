@@ -125,6 +125,7 @@ fn repr_quote(has_single: bool, has_double: bool) -> char {
     }
 }
 
+#[cfg(test)]
 /// Python's `repr()` of a `str`.
 #[must_use]
 pub fn str_repr(s: &str) -> String {
@@ -592,6 +593,12 @@ fn write_int_str<S: decimal::AsciiSink>(
     if negative {
         out.push_ascii(b"-");
     }
+    if let Some(small) = n.magnitude().to_u64() {
+        // At most 20 digits: far under the limit.
+        let mut buf = [0_u8; 64];
+        out.push_ascii(crate::format_spec::u64_digits(small, 10, &mut buf));
+        return Ok(());
+    }
     decimal::magnitude_to_decimal(n.magnitude(), out);
     let digits = len(out) - usize::from(negative);
     if digits > MAX_STR_DIGITS {
@@ -758,6 +765,8 @@ fn long_from_c_string(buf: &[u8], base: u32) -> Result<(BigInt, usize), IntSynta
     let magnitude = if base == 10 {
         // Every byte is a decimal digit or `_` (checked above).
         BigInt::from(decimal::decimal_to_magnitude(literal))
+    } else if let Some(small) = small_magnitude(literal, base) {
+        BigInt::from(small)
     } else {
         let clean: Vec<u8> = literal.iter().copied().filter(|&b| b != b'_').collect();
         BigInt::parse_bytes(&clean, base).ok_or(IntSyntaxError::Invalid)?
@@ -766,6 +775,19 @@ fn long_from_c_string(buf: &[u8], base: u32) -> Result<(BigInt, usize), IntSynta
         return Err(IntSyntaxError::Invalid);
     }
     Ok((if negative { -magnitude } else { magnitude }, p))
+}
+
+/// The value of a validated literal (digits below `base` and `_`s) when it
+/// fits a `u64`, skipping the `_`-free copy and the generic big parser.
+fn small_magnitude(literal: &[u8], base: u32) -> Option<u64> {
+    let base = u64::from(base);
+    literal
+        .iter()
+        .filter(|&&b| b != b'_')
+        .try_fold(0_u64, |acc, &b| {
+            acc.checked_mul(base)?
+                .checked_add(u64::from(ascii_digit_value(b)))
+        })
 }
 
 /// Parses `buf` as `int()` does, building the "invalid literal" message
@@ -790,6 +812,7 @@ fn int_from_buffer(
     }
 }
 
+#[cfg(test)]
 /// Python's `int(text, base)` for `str` text.
 ///
 /// # Errors
@@ -970,6 +993,7 @@ fn float_parse_error(literal_repr: &str) -> PyError {
     PyError::value_error(format!("could not convert string to float: {literal_repr}"))
 }
 
+#[cfg(test)]
 /// Python's `float(text)` for `str` text.
 ///
 /// # Errors
@@ -1226,6 +1250,54 @@ mod tests {
 }
 
 #[cfg(test)]
+mod api_tests {
+    use super::*;
+    use crate::ExcKind;
+    use num_traits::Pow;
+
+    fn err_kind(r: PcResult<Value>) -> Option<ExcKind> {
+        r.err().map(|e| e.kind)
+    }
+
+    #[test]
+    fn int_str_digit_limit() {
+        let big = Value::Int(BigInt::from(10).pow(4299u32));
+        assert!(int_str_api(&big).is_ok());
+        let too_big = Value::Int(BigInt::from(10).pow(4300u32));
+        let err = int_str_api(&too_big).err();
+        assert!(
+            matches!(err, Some(PyError { kind: ExcKind::ValueError, arg: Value::Str(ref s) })
+            if s.to_string_lossy() == "Exceeds the limit (4300 digits) for integer string \
+                conversion; use sys.set_int_max_str_digits() to increase the limit")
+        );
+        // repr of a container holding the int raises the same error.
+        assert_eq!(
+            err_kind(float_repr_api(&Value::List(vec![too_big]))),
+            Some(ExcKind::ValueError)
+        );
+    }
+
+    #[test]
+    fn float_of_any_value() {
+        let f = |v: Value| int_to_float_api(&v).ok();
+        assert!(matches!(f(Value::Bool(true)), Some(Value::Float(x)) if x == 1.0));
+        assert!(matches!(f(Value::str(" 2.5 ")), Some(Value::Float(x)) if x == 2.5));
+        assert!(matches!(f(Value::Bytes(b"-1e3".to_vec())), Some(Value::Float(x)) if x == -1000.0));
+        let err = parse_float_api(&Value::None).err();
+        assert!(
+            matches!(err, Some(PyError { kind: ExcKind::TypeError, arg: Value::Str(ref s) })
+            if s.to_string_lossy()
+                == "float() argument must be a string or a real number, not 'NoneType'")
+        );
+        let huge = Value::Int(BigInt::from(2).pow(1024u32));
+        assert_eq!(
+            err_kind(int_to_float_api(&huge)),
+            Some(ExcKind::OverflowError)
+        );
+    }
+}
+
+#[cfg(test)]
 mod shortest_tests {
     use super::*;
 
@@ -1356,6 +1428,43 @@ mod tie_equivalence {
             }
             for n in 0..40 {
                 assert_eq!(super::may_be_decimal_tie(x, n), old_tie(x, n), "{x:e} {n}");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod fast_path_tests {
+    use super::*;
+
+    /// The `u64` paths of `int()` and `str(int)` agree with num-bigint
+    /// on both sides of the `u64` boundary.
+    #[test]
+    fn small_int_paths_match_bigint() {
+        let mut values: Vec<BigInt> = Vec::new();
+        for k in [0_u32, 1, 31, 32, 63, 64, 65, 100] {
+            let p = BigInt::from(2_u8).pow(k);
+            for d in [-1_i8, 0, 1] {
+                values.push(&p + d);
+                values.push(-(&p + d));
+            }
+        }
+        values.push(BigInt::from(u64::MAX));
+        values.push(BigInt::from(10_u64.pow(19)));
+        for n in &values {
+            assert_eq!(int_str(n).ok(), Some(n.to_string()), "{n}");
+            for base in [2_u32, 8, 16, 36, 10] {
+                let text = n.magnitude().to_str_radix(base);
+                let want = BigInt::from(n.magnitude().clone());
+                assert_eq!(parse_int_str(&text, base).ok(), Some(want.clone()));
+                let mut underscored = String::new();
+                for (i, c) in text.chars().enumerate() {
+                    if i > 0 && i % 3 == 0 {
+                        underscored.push('_');
+                    }
+                    underscored.push(c);
+                }
+                assert_eq!(parse_int_str(&underscored, base).ok(), Some(want));
             }
         }
     }

@@ -66,6 +66,11 @@ None.
 - subn outcome.stdout
 - split outcome.stdout
 
+## Rulings by a person
+Agents had to follow these. Some accept differences that the list above doesn't show.
+
+- Don't reproduce re.DEBUG output (flag 128). CPython prints its internal parse tree and sre bytecode to stdout, which is out of scope. Differences in stdout ('<api> outcome.stdout') are approved for every API that takes flags. Everything else about a pattern compiled with DEBUG (its result, errors and other flags) must still match.
+
 ## Differences agents proposed (not approved unless listed above)
 The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.
 

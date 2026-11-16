@@ -7,9 +7,9 @@ mod parse;
 use num_bigint::BigInt;
 
 pub(crate) use number::wrap_e_precision;
-pub(crate) use number::{check_size, memory_error, try_vec};
-pub use number::{double_to_string, int_magnitude_digits, try_double_to_string, DtoaFlags};
-pub use parse::{parse_spec, parse_spec_code_points, FormatSpec, Thousands};
+pub(crate) use number::{check_size, memory_error, try_vec, u64_digits};
+pub use number::{int_magnitude_digits, try_double_to_string, DtoaFlags};
+pub use parse::parse_spec_code_points;
 
 use crate::repr::value_str;
 use crate::value::{check_builtins, PcResult, PyError, PyStr, Value};

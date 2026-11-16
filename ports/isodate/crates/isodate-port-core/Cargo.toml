@@ -1,0 +1,21 @@
+[package]
+name = "isodate-port-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Experimental, unofficial Rust port of isodate."
+
+[dependencies]
+pc-datetime-port-core = { path = "../../vendor/pc_datetime" }
+pc-re-port-core = { path = "../../vendor/pc_re" }
+num-bigint = "0.4"
+num-traits = "0.2"
+num-integer = "0.1"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "parse"
+harness = false

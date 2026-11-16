@@ -1,0 +1,10 @@
+[
+ {"name": "parse_date_ext", "target": "parse_date", "args": ["1985-04-12"], "kwargs": {}},
+ {"name": "parse_date_week", "target": "parse_date", "args": ["1985-W15-5"], "kwargs": {}},
+ {"name": "parse_time_tz", "target": "parse_time", "args": ["15:27:46.123456+01:00"], "kwargs": {}},
+ {"name": "parse_datetime_utc", "target": "parse_datetime", "args": ["2012-10-12T08:29:46.069178Z"], "kwargs": {}},
+ {"name": "parse_duration_full", "target": "parse_duration", "args": ["P3Y6M4DT12H30M5S"], "kwargs": {}},
+ {"name": "parse_duration_td", "target": "parse_duration", "args": ["P1DT2H3M4.5S"], "kwargs": {}},
+ {"name": "parse_tzinfo_ext", "target": "parse_tzinfo", "args": ["-05:30"], "kwargs": {}},
+ {"name": "max_days", "target": "duration.max_days_in_month", "args": [2000, 2], "kwargs": {}}
+]

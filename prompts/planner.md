@@ -30,5 +30,6 @@ Every API in the prompt must appear in a task. Order tasks bottom-up so a task c
 - Read the `python-to-rust-traps` skill and name each trap that applies to this library.
 - Check how the library depends on `re`, `datetime`, `decimal`, and similar modules. Note where Rust equivalents differ, because they're the likeliest source of mismatches.
 - The PyO3 layer may import only `datetime`, `decimal`, `fractions`, and `builtins` from Python, to build return types. It can't import `re` or the original library, because the logic must be Rust.
+- **Submodules.** If the original has submodules users import (`import pkg.sub`, `from pkg.sub import x`, or classes whose `__module__` is `pkg.sub`, which pickling looks up), make each a submodule of the root module, list it in the root's `__all__` so maturin's `from .pkg import *` exposes it, and call `portwright_submodules::register_submodules(root)?` at the end of the `#[pymodule]` function. The harness wrote `portwright_submodules.rs` in the bindings crate. Don't edit it: it's the only code allowed to touch `sys`, and only while unchanged. Put all of this in the frozen `lib.rs`, since no task can change it later.
 
 Don't port everything yourself: leave the APIs to porters. `python -m portwright.agent_check port SomeApi` shows whether the workspace builds.

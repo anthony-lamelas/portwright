@@ -52,28 +52,66 @@ def strip_holdouts(tests_dir: str | Path, out_dir: str | Path, *, seed: int, fra
     return removed
 
 
-def private_test_names(tests_dir: str | Path) -> set[str]:
-    """Find tests that reach into private names or use mocks, which a port can't honor."""
-    names = set()
-    for path in _test_files(Path(tests_dir)):
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        private_imports = {
-            alias.asname or alias.name
-            for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
-            for alias in node.names if alias.name.startswith("_")
-        }
-        for function in ast.walk(tree):
-            if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)) or not function.name.startswith("test"):
-                continue
-            for node in ast.walk(function):
-                private = isinstance(node, ast.Attribute) and node.attr.startswith("_") and not node.attr.startswith("__")
-                named = isinstance(node, ast.Name) and (node.id in private_imports or node.id in MOCK_NAMES)
-                argument = isinstance(node, ast.arg) and node.arg in MOCK_NAMES
-                if private or named or argument:
-                    names.add(function.name)
-                    break
-    return names
+def _reaches_internals(function, private_imports: set[str]) -> bool:
+    """Whether a function body or its arguments touch private names or mocks."""
+    for node in ast.walk(function):
+        private = isinstance(node, ast.Attribute) and node.attr.startswith("_") and not node.attr.startswith("__")
+        named = isinstance(node, ast.Name) and (node.id in private_imports or node.id in MOCK_NAMES)
+        argument = isinstance(node, ast.arg) and node.arg in MOCK_NAMES
+        if private or named or argument:
+            return True
+    return False
 
+
+def _arguments(function) -> set[str]:
+    return {arg.arg for arg in [*function.args.posonlyargs, *function.args.args, *function.args.kwonlyargs]}
+
+
+def _is_fixture(function) -> bool:
+    return any("fixture" in ast.unparse(decorator) for decorator in function.decorator_list)
+
+
+def private_test_names(tests_dir: str | Path) -> set[str]:
+    """Find tests that reach into private names or use mocks, which a port can't honor.
+
+    A test can get its mock through a fixture, as isodate's ``test_format(tz_patch, ...)``
+    does with a ``tz_patch`` fixture that monkeypatches module globals (#66). Fixtures in
+    the test's file and in ``conftest.py`` files count, including through other fixtures.
+    """
+    tests_dir = Path(tests_dir)
+    parsed = {path: ast.parse(path.read_text(encoding="utf-8")) for path in [*_test_files(tests_dir), *sorted(tests_dir.rglob("conftest.py"))]}
+    imports = {
+        path: {alias.asname or alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)
+               for alias in node.names if alias.name.startswith("_")}
+        for path, tree in parsed.items()
+    }
+    functions = {
+        path: [node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))]
+        for path, tree in parsed.items()
+    }
+
+    def mocking_fixtures(path: Path) -> set[str]:
+        visible = [(f, imports[path]) for f in functions[path] if _is_fixture(f)]
+        visible += [(f, imports[other]) for other in parsed if other.name == "conftest.py"
+                    and other.parent in (path.parent, *path.parent.parents) for f in functions[other] if _is_fixture(f)]
+        found = {f.name for f, private in visible if _reaches_internals(f, private)}
+        while True:  # a fixture that uses a mocking fixture mocks too
+            more = {f.name for f, _ in visible if f.name not in found and _arguments(f) & found}
+            if not more:
+                return found
+            found |= more
+
+    names = set()
+    for path in parsed:
+        if path.name == "conftest.py":
+            continue
+        mocking = mocking_fixtures(path)
+        for function in functions[path]:
+            if not function.name.startswith("test"):
+                continue
+            if _reaches_internals(function, imports[path]) or _arguments(function) & mocking:
+                names.add(function.name)
+    return names
 
 def _top_level_names(folder: str | Path) -> set[str]:
     """Names ``import`` could find directly in ``folder``: modules, packages, extensions."""
