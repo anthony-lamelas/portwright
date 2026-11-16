@@ -1,0 +1,92 @@
+[package]
+name = "isodate-port-core-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+num-bigint = "0.4"
+isodate-port-core = { path = "../crates/isodate-port-core" }
+
+# Keep this crate out of the port's workspace.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+overflow-checks = true
+
+[[bin]]
+name = "parse_date"
+path = "fuzz_targets/parse_date.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_date_yeardigits"
+path = "fuzz_targets/parse_date_yeardigits.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_time"
+path = "fuzz_targets/parse_time.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_datetime"
+path = "fuzz_targets/parse_datetime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_duration"
+path = "fuzz_targets/parse_duration.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "parse_tzinfo"
+path = "fuzz_targets/parse_tzinfo.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "format_offset"
+path = "fuzz_targets/format_offset.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "strftime"
+path = "fuzz_targets/strftime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "decimal"
+path = "fuzz_targets/decimal.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "duration_arith"
+path = "fuzz_targets/duration_arith.rs"
+test = false
+doc = false
+bench = false
+

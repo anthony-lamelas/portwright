@@ -1,0 +1,16 @@
+[workspace]
+resolver = "2"
+members = ["crates/isodate-port-core", "crates/isodate-port-py"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[profile.release]
+# From vendor/pc_re, whose speed was measured with these settings.
+lto = "fat"
+codegen-units = 1
+# Python integers never overflow, so an unexpected overflow must never wrap silently.
+overflow-checks = true

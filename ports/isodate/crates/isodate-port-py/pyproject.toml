@@ -1,0 +1,12 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "isodate-rust-port"
+version = "0.1.0"
+requires-python = ">=3.12"
+description = "Experimental, unofficial Rust port of isodate."
+
+[tool.maturin]
+module-name = "isodate"

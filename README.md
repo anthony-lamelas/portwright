@@ -4,7 +4,7 @@
 
 Agents write the Rust. Ordinary code decides whether the work counts. The original Python library is the reference throughout. Agents choose test inputs, but the original supplies every expected answer, and no agent judges its own work.
 
-> Status: one real port so far ([`ports/parse`](ports/parse), from [`parse`](https://github.com/r1chardj0n3s/parse)). Not actively maintained. Unofficial; not affiliated with the authors of any library it ports.
+> Status: two real ports so far: [`ports/parse`](ports/parse), from [`parse`](https://github.com/r1chardj0n3s/parse), and [`ports/isodate`](ports/isodate), from [`isodate`](https://github.com/gweis/isodate). Not actively maintained. Unofficial; not affiliated with the authors of any library it ports.
 
 ## What a run does
 
@@ -112,6 +112,34 @@ The `parse` run was resumed after each fix, not restarted, so its report shows a
 
 Others have ported `parse` to Rust, and I found them only after this run: [formatparse](https://github.com/eddiethedean/formatparse) (a PyO3 package that aims to be a drop-in replacement for common patterns) and [parse_rust](https://github.com/lucien2k/parse_rust) (Rust only). This port isn't meant to compete with them. It's a demonstration of the harness, and what's new here is the conformance evidence.
 
+## Results: `isodate`
+
+[`isodate`](https://github.com/gweis/isodate) (BSD-3) is about 1,400 lines of Python that parse and format ISO 8601 dates, times, durations and time zones. It was the first third-party run with the parallel scheduler: the planner split it into four tasks (duration, time zones, parsing, formatting), and two porters worked at once. Its regex and `strftime` behavior comes from the pycompat crates `pc_re` and `pc_datetime`, vendored into the port and frozen.
+
+**Verdict: matched on what was tested.** Full report: [`ports/isodate/CONFORMANCE.md`](ports/isodate/CONFORMANCE.md).
+
+| Check | Result |
+| --- | --- |
+| Differential, final gate | no differences across 37,856 calls to 125 APIs (hardening: about 165,600 calls) |
+| Upstream tests, visible | 275/275 pass |
+| Upstream tests, hidden from agents | 278/280 pass |
+| Checks catch planted bugs in the Python | 138/144 (96%) |
+| Checks reach the original's branches | 97.5% |
+| Checks catch Rust mutants | 10/10 (30 not viable) |
+| Checks reach Rust lines | 84.0% |
+| cargo-fuzz | 10 targets, 120s each, no crashes |
+
+Through Python it is 2.1x to 17.7x faster (parsing a `timedelta` duration: 5.7 µs to 0.32 µs). The run cost about $74 of API-equivalent usage, including review rounds that were rejected.
+
+The two hidden tests that fail patch a fixture with `monkeypatch`, so they can't reach a Rust port. The 6 uncaught planted bugs are listed in the report.
+
+**Rulings by a person.** The run stopped three times because agents asked for something only a person can decide. Each ruling is printed in the report:
+- Submodules such as `isodate.duration` are registered in `sys.modules` by a harness-written file the integrity gate checks byte for byte. The bindings import nothing else from Python.
+- `Duration`'s operator methods are Rust objects, not Python functions, so `inspect.isfunction` and function-only attributes differ. Names, docstrings, signatures, calls and errors are still compared. A request to compile Python inside the bindings to fake them was refused.
+- The internal helpers `build_date_regexps`, `build_time_regexps` and `TZ_RE` return Rust-backed pattern objects, not `re.Pattern`. Their type is an approved difference; their matching results, spans, groups and errors are still compared. A request to let the bindings import Python's `re` was refused.
+
+The run exposed harness issues #62 to #67, all fixed. The worst was that a review fix loop could keep spending rounds on a request only a person could answer (#65).
+
 ## pycompat: Python's built-ins as Rust crates (in progress)
 
 Most Python libraries lean on the same built-ins: `str.format` and `%`, `repr` of floats, int parsing, floor division, Unicode string methods, `re`, and `datetime`. Every port has to reproduce them exactly, so rebuilding them per library wastes effort and invites small differences. pycompat ports them once, as crates later ports can vendor.
@@ -188,6 +216,7 @@ skills/            Rust guidance mounted into agent sessions (see skills/ATTRIBU
 docker/            the toolchain image
 tests/             harness tests with a fixture library and scripted agents
 ports/parse/       the generated port, its checks, and CONFORMANCE.md
+ports/isodate/     the same for isodate, with its vendored pc_re and pc_datetime crates
 pycompat/shims/    one-line shims over Python's built-ins, with their tests and planted bugs
 pycompat/ports/    finished pycompat crates, their checks, and CONFORMANCE.md
 docs/              the harness issues log
