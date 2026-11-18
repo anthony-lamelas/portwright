@@ -482,22 +482,15 @@ pub fn date_new<V: Borrow<Value>>(args: &[V]) -> PyResult<Date> {
     Date::new(fields[0], fields[1], fields[2])
 }
 
-/// The shim's `_date_in(d)`: `datetime.date(*d)`.
+/// The shim's date fields, in order.
+pub const DATE_FIELDS: [&str; 3] = ["year", "month", "day"];
+
+/// The shim's `_date_in(d)`: `datetime.date(*_fields(d, "date", _DATE))`.
 ///
 /// # Errors
-/// TypeError when `d` isn't iterable, then [`date_new`]'s errors.
+/// [`Value::shim_fields`]'s TypeErrors, then [`date_new`]'s errors.
 pub fn date_in(d: &Value) -> PyResult<Date> {
-    // Unpacking a list or tuple sees its items as they are; skip `iterate`'s copy.
-    if let Value::List(items) | Value::Tuple(items) = d {
-        return date_new(items);
-    }
-    let Some(items) = d.iterate() else {
-        return Err(PyError::type_error(format!(
-            "datetime.date() argument after * must be an iterable, not {}",
-            d.type_name()
-        )));
-    };
-    date_new(&items)
+    date_new(d.shim_fields("date", &DATE_FIELDS, None)?)
 }
 
 // ------------------------------------------------------------------ shim functions

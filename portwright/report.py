@@ -133,8 +133,9 @@ def build_markdown(paths, config, state: dict, tasks: dict, speed: dict, native:
         except ValueError:
             leaks = []
         if leaks:
-            parts.append("## Shim domain gaps a person accepted\nA reviewer found these inputs reach behavior outside the "
-                         "built-ins before the checks were written, and a person let the run go on with them:\n\n"
+            outside = "the built-ins" if getattr(config, "strict_bindings", False) else "the library's own code"
+            parts.append("## Domain gaps a person accepted\nA reviewer found these inputs reach behavior outside "
+                         f"{outside} before the checks were written, and a person let the run go on with them:\n\n"
                          + _list_or_none([f"`{leak.get('api')}` with `{leak.get('input')}`: {leak.get('reaches')}"
                                           for leak in leaks if isinstance(leak, dict)]))
     proposals = sorted((paths.control / "differences").glob("*.json")) if (paths.control / "differences").is_dir() else []

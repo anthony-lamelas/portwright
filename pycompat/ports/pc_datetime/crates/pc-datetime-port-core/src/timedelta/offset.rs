@@ -71,13 +71,20 @@ impl FixedOffset {
     }
 }
 
-/// The shim's `_tz(offset)`: `None`, or `timezone(timedelta(seconds=offset))`.
+/// The shim's `_tz(offset)`: `None`, or `timezone(timedelta(seconds=offset))` for an int.
 ///
 /// # Errors
-/// The timedelta constructor's errors, then the timezone's ValueError.
+/// TypeError for anything but an int (bool counts) or None, the timedelta constructor's
+/// errors, then the timezone's ValueError.
 pub fn offset_in(offset: &Value) -> PyResult<Option<FixedOffset>> {
     if *offset == Value::None {
         return Ok(None);
+    }
+    if !matches!(offset, Value::Int(_) | Value::Bool(_)) {
+        return Err(PyError::type_error(format!(
+            "utcoffset must be whole seconds as an int, or None, not {}",
+            offset.type_name()
+        )));
     }
     let delta = new_delta(&[(Unit::Seconds, offset)])?;
     FixedOffset::new(delta).map(Some)
@@ -99,7 +106,7 @@ mod tests {
         assert_eq!(name(Value::int(0)), "UTC");
         assert_eq!(name(Value::int(19800)), "UTC+05:30");
         assert_eq!(name(Value::int(1)), "UTC+00:00:01");
-        assert_eq!(name(Value::Float(0.5)), "UTC+00:00:00.500000");
+        assert_eq!(name(Value::Float(0.5)), ""); // refused: a fractional offset
         assert_eq!(name(Value::int(-1)), "UTC-00:00:01");
     }
 }

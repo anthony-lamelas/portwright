@@ -7,6 +7,8 @@ from pathlib import Path
 from portwright.gates import GateResult
 from portwright.toolchain import run_in_toolchain
 
+FUZZ_CONTAINER_MEMORY = "3g"
+
 
 def list_fuzz_targets(workspace) -> list[str]:
     return sorted(path.stem for path in (Path(workspace) / "fuzz" / "fuzz_targets").glob("*.rs"))
@@ -15,8 +17,9 @@ def list_fuzz_targets(workspace) -> list[str]:
 def fuzz_gate(workspace, *, seconds_per_target: int = 60, target_dir=None, parallel: int = 3) -> GateResult:
     """Fail if there are no targets, or any target finds a crash.
 
-    All targets are built once, then run ``parallel`` at a time. Each gets 2 GB, so
-    three at once stay inside the memory the agents leave free.
+    All targets are built once, then run ``parallel`` at a time. libFuzzer stops each
+    at 2 GB, in a 3 GB container, and the machine's gate pool decides how many run at
+    once (``resources.GateBudget``).
     """
     from concurrent.futures import ThreadPoolExecutor
 
@@ -38,6 +41,9 @@ def fuzz_gate(workspace, *, seconds_per_target: int = 60, target_dir=None, paral
                 "--", f"-max_total_time={seconds_per_target}", "-timeout=10", "-rss_limit_mb=2048",
             ],
             workspace, target_dir=target_dir, timeout=seconds_per_target + 900, fetch=("fuzz/Cargo.toml",),
+            # libFuzzer stops a target at 2 GB itself; a smaller container lets more run at once
+            # inside the machine's gate memory.
+            memory=FUZZ_CONTAINER_MEMORY,
         )
 
     crashes, memory_limit = {}, {}

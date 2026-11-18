@@ -74,6 +74,42 @@ impl Value {
         }
     }
 
+    /// The shim's `_fields(value, kind, names, offset)`: `value` must be a tuple of
+    /// exactly `names.len()` fields, all ints (bool counts), except the `utcoffset` field
+    /// at index `offset`, which `_tz` checks later.
+    ///
+    /// # Errors
+    /// `TypeError("a KIND must be a tuple (NAMES)")`, or
+    /// `TypeError("KIND field NAME must be an int, not T")` for the first bad field.
+    pub fn shim_fields(
+        &self,
+        kind: &str,
+        names: &[&str],
+        offset: Option<usize>,
+    ) -> PyResult<&[Value]> {
+        let Self::Tuple(items) = self else {
+            return Err(PyError::type_error(format!(
+                "a {kind} must be a tuple ({})",
+                names.join(", ")
+            )));
+        };
+        if items.len() != names.len() {
+            return Err(PyError::type_error(format!(
+                "a {kind} must be a tuple ({})",
+                names.join(", ")
+            )));
+        }
+        for (index, (name, field)) in names.iter().zip(items).enumerate() {
+            if Some(index) != offset && !matches!(field, Self::Int(_) | Self::Bool(_)) {
+                return Err(PyError::type_error(format!(
+                    "{kind} field {name} must be an int, not {}",
+                    field.type_name()
+                )));
+            }
+        }
+        Ok(items)
+    }
+
     /// The shim's `_check_builtin`: TypeError for the first non-built-in value, depth first,
     /// dict keys before their values.
     ///

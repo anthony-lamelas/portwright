@@ -495,11 +495,36 @@ impl DateTime {
 
 // ------------------------------------------------------------------ shim inputs
 
-/// The shim's `_time_in(t)`: `time(t[0], t[1], t[2], t[3], _tz(t[4]), fold=t[5])`.
+/// The shim's time fields, in order: `_TIME`.
+pub const TIME_FIELDS: [&str; 6] = [
+    "hour",
+    "minute",
+    "second",
+    "microsecond",
+    "utcoffset",
+    "fold",
+];
+
+/// The shim's datetime fields, in order: `_DATE + _TIME`.
+pub const DATETIME_FIELDS: [&str; 9] = [
+    "year",
+    "month",
+    "day",
+    "hour",
+    "minute",
+    "second",
+    "microsecond",
+    "utcoffset",
+    "fold",
+];
+
+/// The shim's `_time_in(t)`: `_fields(t, "time", _TIME, offset=4)`, then
+/// `time(t[0], t[1], t[2], t[3], _tz(t[4]), fold=t[5])`.
 ///
 /// # Errors
-/// Indexing errors and `_tz`'s errors in evaluation order, then the constructor's.
+/// [`Value::shim_fields`]'s TypeErrors, `_tz`'s errors, then the constructor's.
 pub fn time_in(t: &Value) -> PyResult<Time> {
+    t.shim_fields("time", &TIME_FIELDS, Some(4))?;
     let fields = [item(t, 0)?, item(t, 1)?, item(t, 2)?, item(t, 3)?];
     let tz = offset_in(&*item(t, 4)?)?;
     let fold = item(t, 5)?;
@@ -514,11 +539,13 @@ pub fn time_in(t: &Value) -> PyResult<Time> {
     .convert()
 }
 
-/// The shim's `_dt_in(d)`: `datetime(d[0], ..., d[6], _tz(d[7]), fold=d[8])`.
+/// The shim's `_dt_in(d)`: `_fields(d, "datetime", _DATETIME, offset=7)`, then
+/// `datetime(d[0], ..., d[6], _tz(d[7]), fold=d[8])`.
 ///
 /// # Errors
-/// Indexing errors and `_tz`'s errors in evaluation order, then the constructor's.
+/// [`Value::shim_fields`]'s TypeErrors, `_tz`'s errors, then the constructor's.
 pub fn dt_in(d: &Value) -> PyResult<DateTime> {
+    d.shim_fields("datetime", &DATETIME_FIELDS, Some(7))?;
     let fields = [
         item(d, 0)?,
         item(d, 1)?,

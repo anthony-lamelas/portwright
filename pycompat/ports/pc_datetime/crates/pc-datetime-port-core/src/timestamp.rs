@@ -7,7 +7,7 @@ use num_bigint::BigInt;
 
 use crate::args::Param;
 use crate::date::{ord_to_ymd, Date};
-use crate::datetime::{dt_in, DateTime};
+use crate::datetime::{dt_in, DateTime, DATETIME_FIELDS};
 use crate::error::{PyError, PyResult};
 use crate::timedelta::num::true_divide;
 use crate::timedelta::{offset_in, FixedOffset};
@@ -26,9 +26,10 @@ fn time_t_overflow() -> PyError {
 
 /// glibc `gmtime_r` failing with `EOVERFLOW` (the year doesn't fit `tm_year`).
 ///
-/// CPython raises `OSError(75, 'Value too large for defined data type')` here.
+/// CPython raises `OSError(75, 'Value too large for defined data type')` here, with the
+/// C library's text, so the shim turns it into this fixed OverflowError.
 fn gmtime_overflow() -> PyError {
-    PyError::os_error(75, "Value too large for defined data type")
+    PyError::overflow_error("timestamp out of range for the C library's gmtime")
 }
 
 /// The UTC epoch, `datetime(1970, 1, 1, tzinfo=timezone.utc)`.
@@ -140,11 +141,11 @@ pub fn astimezone(dt: DateTime, tz: FixedOffset) -> PyResult<DateTime> {
 /// `pc_datetime.datetime_timestamp`.
 ///
 /// # Errors
-/// Indexing errors, ValueError for a naive value, then `_dt_in`'s errors.
+/// `_fields`'s TypeErrors, ValueError for a naive value, then `_dt_in`'s errors.
 pub fn datetime_timestamp(args: &[Value], kwargs: &Kwargs) -> PyResult<Value> {
     let v =
         crate::timedelta::bind_ref("datetime_timestamp", &[Param::required("d")], args, kwargs)?;
-    if v[0].get_index(7)? == Value::None {
+    if v[0].shim_fields("datetime", &DATETIME_FIELDS, Some(7))?[7] == Value::None {
         return Err(PyError::value_error(
             "naive datetimes depend on the local time zone and aren't supported",
         ));
@@ -175,7 +176,7 @@ pub fn datetime_fromtimestamp(args: &[Value], kwargs: &Kwargs) -> PyResult<Value
 /// `pc_datetime.datetime_astimezone`.
 ///
 /// # Errors
-/// Indexing errors, ValueError for a missing offset, `_dt_in`'s and `_tz`'s errors, then
+/// `_fields`'s TypeErrors, ValueError for a missing offset, `_dt_in`'s and `_tz`'s errors, then
 /// [`astimezone`]'s.
 pub fn datetime_astimezone(args: &[Value], kwargs: &Kwargs) -> PyResult<Value> {
     let v = crate::timedelta::bind_ref(
@@ -184,7 +185,9 @@ pub fn datetime_astimezone(args: &[Value], kwargs: &Kwargs) -> PyResult<Value> {
         args,
         kwargs,
     )?;
-    if v[0].get_index(7)? == Value::None || *v[1] == Value::None {
+    if v[0].shim_fields("datetime", &DATETIME_FIELDS, Some(7))?[7] == Value::None
+        || *v[1] == Value::None
+    {
         return Err(PyError::value_error(
             "both offsets are required; local time isn't supported",
         ));

@@ -101,31 +101,36 @@ def _alive(entry: dict) -> bool:
     return started is None or _process_start(pid) in (None, started)
 
 
-class AgentBudget:
-    """The memory all agent containers on this machine may hold at once, across runs.
+class MemoryBudget:
+    """Memory one kind of container on this machine may hold at once, across runs.
 
-    Each session reserves its container's memory limit in a ledger file before it
-    starts and gives it back when it ends. A session that doesn't fit waits. Entries
-    belong to a process: if that process dies, even by SIGKILL, its entries are
-    ignored and dropped, so a killed run can't hold memory forever.
+    Each container reserves its memory limit in a ledger file before it starts and
+    gives it back when it ends. One that doesn't fit waits. Entries belong to a
+    process: if that process dies, even by SIGKILL, its entries are ignored and
+    dropped, so a killed run can't hold memory forever. ``pool`` names the ledger.
     """
 
-    def __init__(self, directory: str | Path | None = None, total_mb: int | None = None, poll_seconds: float = 15.0):
+    pool = "memory"
+    what = "memory"
+    share = AGENTS_MEMORY_SHARE
+    default_poll_seconds = 15.0
+
+    def __init__(self, directory: str | Path | None = None, total_mb: int | None = None, poll_seconds: float | None = None):
         self.directory = Path(directory) if directory else budget_dir()
         machine = total_memory_mb()
-        self.total_mb = total_mb if total_mb is not None else int((machine or 16384) * AGENTS_MEMORY_SHARE)
-        self.poll_seconds = poll_seconds
+        self.total_mb = total_mb if total_mb is not None else int((machine or 16384) * self.share)
+        self.poll_seconds = self.default_poll_seconds if poll_seconds is None else poll_seconds
         self._pid = os.getpid()
         self._started = _process_start(self._pid)
 
     @property
     def ledger(self) -> Path:
-        return self.directory / "agents.json"
+        return self.directory / f"{self.pool}.json"
 
     @contextmanager
     def _locked(self):
         self.directory.mkdir(parents=True, exist_ok=True)
-        with open(self.directory / "agents.lock", "a") as lock:
+        with open(self.directory / f"{self.pool}.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             try:
                 try:
@@ -161,12 +166,12 @@ class AgentBudget:
 
     @contextmanager
     def reserve(self, mb: int, label: str = "", on_wait=None):
-        """Hold ``mb`` of the machine's agent memory for the duration of the block."""
+        """Hold ``mb`` of the pool for the duration of the block."""
         key = self.try_reserve(mb, label)
         waited = False
         while key is None:
             if on_wait and not waited:
-                on_wait(f"waiting for agent memory: {self.in_use_mb()} of {self.total_mb} MB is held by other sessions on this machine")
+                on_wait(f"waiting for {self.what}: {self.in_use_mb()} of {self.total_mb} MB is held by others on this machine")
             waited = True
             time.sleep(self.poll_seconds)
             key = self.try_reserve(mb, label)
@@ -174,6 +179,37 @@ class AgentBudget:
             yield key
         finally:
             self.release(key)
+
+
+class AgentBudget(MemoryBudget):
+    """All agent containers on the machine, across runs: 60% of RAM (open item H)."""
+
+    pool = "agents"
+    what = "agent memory"
+    share = AGENTS_MEMORY_SHARE
+
+
+class GateBudget(MemoryBudget):
+    """All gate containers on the machine, across runs and threads: the 40% of RAM the
+    agents leave free. Each gate container had its own limit, but three mutation
+    workers, three fuzz targets and the gates of parallel tasks could run at once and
+    together pass it (open item V). A gate that doesn't fit waits for one to finish."""
+
+    pool = "gates"
+    what = "gate memory"
+    share = GATES_MEMORY_SHARE
+    default_poll_seconds = 2.0
+
+
+_gate_budget: GateBudget | None = None
+
+
+def gate_budget() -> GateBudget:
+    """The process's view of the machine's gate pool, made on first use."""
+    global _gate_budget
+    if _gate_budget is None or _gate_budget.directory != budget_dir():
+        _gate_budget = GateBudget()
+    return _gate_budget
 
 
 # ---------------------------------------------------------------- liveness

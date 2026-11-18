@@ -92,6 +92,7 @@ def run_in_toolchain(
     timeout: float = 1800.0,
     image: str = IMAGE,
     fetch: bool | tuple[str, ...] = True,
+    memory: str | None = None,
 ) -> subprocess.CompletedProcess:
     """Run a command with the workspace mounted at /work and return its result.
 
@@ -122,7 +123,7 @@ def run_in_toolchain(
             return fetched
     # Builds run agent code (build scripts, proc macros, tests) and can use a lot of
     # memory, so they get the same limit as every other gate container (open item E).
-    memory = resources.gate_memory_limit()
+    memory = memory or resources.gate_memory_limit()
     docker = [
         "docker", "run", "--rm",
         "--user", f"{os.getuid()}:{os.getgid()}",
@@ -157,9 +158,11 @@ def run_in_toolchain(
     docker += ["--name", name, "--label", "portwright.gate=1"]
     command = resources.watched(command, heartbeat, WATCHDOG_MOUNT)
     try:
-        return subprocess.run(
-            [*docker, image, *command], capture_output=True, text=True, timeout=timeout, check=False
-        )
+        # The whole machine's gate containers share one pool (open item V).
+        with resources.gate_budget().reserve(resources.megabytes(memory), f"build {name}"):
+            return subprocess.run(
+                [*docker, image, *command], capture_output=True, text=True, timeout=timeout, check=False
+            )
     except subprocess.TimeoutExpired:
         subprocess.run(["docker", "kill", name], capture_output=True, check=False)
         raise
