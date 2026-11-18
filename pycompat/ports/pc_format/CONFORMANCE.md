@@ -14,7 +14,7 @@ This report shows the port matched the original on the inputs tested. It doesn't
 ## Changes since this report (by hand, not a new run)
 
 - **Sets holding a NaN** (harness issue #78). A NaN's hash is its memory address, so a set or frozenset of more than one item where an item is, or holds, a NaN was ordered differently from run to run. The shim and the core (`value.rs`, `hash_by_address`) now refuse these with a fixed `TypeError`, and the checks' `REFUSED` values include them.
-- **Re-checked** against the current shim (CPython 3.12.3 on the host, seed 20261116, 100 examples): no differences across 22,308 calls to 13 APIs; 12 calls not compared because the original timed out or crashed. All 262 shim tests pass in the toolchain image (CPython 3.12.14). The gate table and figures below predate this change.
+- **Re-checked** in the toolchain image (CPython 3.12.14, seed 20261101, 150 examples), with warnings compared (#84): no differences across 28,858 calls; 14 calls not compared because the original timed out or crashed. All 262 shim tests pass. The gate table and figures below predate this change.
 
 ## Gates
 | Gate | Result | Detail |

@@ -34,8 +34,16 @@ pub enum PyError {
         /// `strerror(errno)`.
         strerror: PyStr,
     },
-    /// `re.error(message)`, whose class name is `error`.
-    ReError(PyStr),
+    /// `re.error(msg, pattern, pos)`, whose class name is `error`. `str()` of it, and
+    /// its `lineno` and `colno`, are derived as `re.error.__init__` derives them.
+    ReError {
+        /// `error.msg`, without the position.
+        msg: PyStr,
+        /// `error.pattern`, the regular expression that failed.
+        pattern: PyStr,
+        /// `error.pos`, an index into `pattern`.
+        pos: usize,
+    },
 }
 
 /// Result of a ported function.
@@ -73,6 +81,50 @@ impl PyError {
             strerror: strerror.into(),
         }
     }
+    /// `re.error(msg, pattern, pos)`.
+    pub fn re_error(msg: impl Into<PyStr>, pattern: impl Into<PyStr>, pos: usize) -> Self {
+        Self::ReError {
+            msg: msg.into(),
+            pattern: pattern.into(),
+            pos,
+        }
+    }
+
+    /// `re.error`'s `(lineno, colno)`: the line of `pos` in the pattern, from 1, and
+    /// `pos` minus the index of the newline before it (-1 when there is none).
+    #[must_use]
+    pub fn re_location(pattern: &PyStr, pos: usize) -> (usize, usize) {
+        let newline = u32::from('\n');
+        let before = &pattern.code_points()[..pos.min(pattern.len())];
+        let lineno = before.iter().filter(|&&c| c == newline).count() + 1;
+        let colno = before
+            .iter()
+            .rposition(|&c| c == newline)
+            .map_or(pos + 1, |i| pos - i);
+        (lineno, colno)
+    }
+
+    /// `str(re.error(msg, pattern, pos))`: the message, its position, and the line and
+    /// column when the pattern has more than one line.
+    #[must_use]
+    pub fn re_text(msg: &PyStr, pattern: &PyStr, pos: usize) -> PyStr {
+        let mut text = msg.clone();
+        text.push_str(&PyStr::from(format!(" at position {pos}").as_str()));
+        if pattern.code_points().contains(&u32::from('\n')) {
+            let (lineno, colno) = Self::re_location(pattern, pos);
+            text.push_str(&PyStr::from(
+                format!(" (line {lineno}, column {colno})").as_str(),
+            ));
+        }
+        text
+    }
+
+    /// `repr(re.error(...))`: `error('<str() of it>')`.
+    #[must_use]
+    pub fn re_repr(text: &PyStr) -> PyStr {
+        PyStr::from(format!("error({})", text.repr()))
+    }
+
     /// The Python exception class name, such as `"TypeError"`.
     pub fn type_name(&self) -> &'static str {
         match self {
@@ -85,7 +137,7 @@ impl PyError {
             Self::RecursionError(_) => "RecursionError",
             Self::AttributeError(_) => "AttributeError",
             Self::OsError { .. } => "OSError",
-            Self::ReError(_) => "error",
+            Self::ReError { .. } => "error",
         }
     }
 }
@@ -100,8 +152,10 @@ impl fmt::Display for PyError {
             | Self::ZeroDivisionError(m)
             | Self::IndexError(m)
             | Self::RecursionError(m)
-            | Self::AttributeError(m)
-            | Self::ReError(m) => m.to_string_lossy(),
+            | Self::AttributeError(m) => m.to_string_lossy(),
+            Self::ReError { msg, pattern, pos } => {
+                Self::re_text(msg, pattern, *pos).to_string_lossy()
+            }
             Self::KeyError(key) => key.repr(),
             Self::OsError { errno, strerror } => {
                 format!("[Errno {errno}] {}", strerror.to_string_lossy())

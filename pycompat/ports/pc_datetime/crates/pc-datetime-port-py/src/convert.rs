@@ -34,11 +34,12 @@ fn to_value_at(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
     }
     // One read of the type pointer, compared against each exact built-in type; this is
     // what `is_exact_instance_of` checks, without fetching the type objects each time.
+    // Exact types only: a subclass of a built-in is `Value::Other`.
     let py = obj.py();
     let ty = obj.get_type_ptr();
     let is = |raw: *mut pyo3::ffi::PyTypeObject| std::ptr::eq(ty, raw);
-    let items = |iter: Bound<'_, pyo3::types::PyIterator>| -> PyResult<Vec<Value>> {
-        iter.map(|item| to_value_at(&item?, depth + 1)).collect()
+    let items = |iter: &mut dyn Iterator<Item = Bound<'_, PyAny>>| -> PyResult<Vec<Value>> {
+        iter.map(|item| to_value_at(&item, depth + 1)).collect()
     };
     Ok(if is(PyInt::type_object_raw(py)) {
         // Most ints fit a C long; PyLong_AsLongLong is far cheaper than the byte-array path.
@@ -73,9 +74,9 @@ fn to_value_at(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
     } else if is(PyByteArray::type_object_raw(py)) {
         Value::ByteArray(obj.cast::<PyByteArray>()?.to_vec())
     } else if is(PySet::type_object_raw(py)) {
-        Value::Set(items(obj.try_iter()?)?)
+        Value::Set(items(&mut obj.cast::<PySet>()?.iter())?)
     } else if is(PyFrozenSet::type_object_raw(py)) {
-        Value::FrozenSet(items(obj.try_iter()?)?)
+        Value::FrozenSet(items(&mut obj.cast::<PyFrozenSet>()?.iter())?)
     } else if is(PyDict::type_object_raw(py)) {
         let dict = obj.cast::<PyDict>()?;
         let mut pairs = Vec::with_capacity(dict.len());
@@ -87,7 +88,7 @@ fn to_value_at(obj: &Bound<'_, PyAny>, depth: usize) -> PyResult<Value> {
         }
         Value::Dict(pairs)
     } else {
-        Value::Other(obj.get_type().name()?.to_string())
+        Value::Other(obj.get_type().name()?.extract::<String>()?)
     })
 }
 
@@ -188,11 +189,71 @@ pub fn to_py<'py>(py: Python<'py>, value: &Value) -> PyResult<Bound<'py, PyAny>>
     })
 }
 
-/// Exception classes the core raises that aren't built-ins.
-mod foreign {
-    #![allow(non_camel_case_types, reason = "the Python class is named `re.error`")]
+/// `re.error`, which `strptime` raises when its regular expression is invalid, with the
+/// attributes CPython's `re.error.__init__` sets: `msg`, `pattern`, `pos`, `lineno` and
+/// `colno`. `args` holds the full message, as `str()` shows it.
+#[pyclass(extends = pyo3::exceptions::PyException, name = "error", module = "re")]
+pub struct ReError {
+    text: PyStr,
+    msg: PyStr,
+    pattern: PyStr,
+    pos: usize,
+    lineno: usize,
+    colno: usize,
+}
 
-    pyo3::create_exception!(re, error, pyo3::exceptions::PyException);
+#[pymethods]
+impl ReError {
+    #[getter]
+    fn args<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyTuple>> {
+        PyTuple::new(py, [str_to_py(py, &self.text)?])
+    }
+
+    #[getter]
+    fn msg<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        str_to_py(py, &self.msg)
+    }
+
+    #[getter]
+    fn pattern<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        str_to_py(py, &self.pattern)
+    }
+
+    #[getter]
+    fn pos(&self) -> usize {
+        self.pos
+    }
+
+    #[getter]
+    fn lineno(&self) -> usize {
+        self.lineno
+    }
+
+    #[getter]
+    fn colno(&self) -> usize {
+        self.colno
+    }
+
+    fn __str__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        str_to_py(py, &self.text)
+    }
+
+    fn __repr__<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyAny>> {
+        str_to_py(py, &PyError::re_repr(&self.text))
+    }
+}
+
+fn re_error(py: Python<'_>, msg: &PyStr, pattern: &PyStr, pos: usize) -> PyResult<PyErr> {
+    let (lineno, colno) = PyError::re_location(pattern, pos);
+    let error = ReError {
+        text: PyError::re_text(msg, pattern, pos),
+        msg: msg.clone(),
+        pattern: pattern.clone(),
+        pos,
+        lineno,
+        colno,
+    };
+    Ok(PyErr::from_value(Bound::new(py, error)?.into_any()))
 }
 
 /// Raises the exception a core error describes, with the same single argument.
@@ -206,7 +267,7 @@ pub fn to_py_err(py: Python<'_>, err: PyError) -> PyErr {
         PyError::IndexError(m) => message(m).map(PyIndexError::new_err),
         PyError::RecursionError(m) => message(m).map(PyRecursionError::new_err),
         PyError::AttributeError(m) => message(m).map(PyAttributeError::new_err),
-        PyError::ReError(m) => message(m).map(foreign::error::new_err),
+        PyError::ReError { msg, pattern, pos } => re_error(py, msg, pattern, *pos),
         PyError::OsError { errno, strerror } => {
             message(strerror).map(|m| PyOSError::new_err((*errno, m)))
         }

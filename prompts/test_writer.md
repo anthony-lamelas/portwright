@@ -34,7 +34,7 @@ To pass a callback, use `PythonExpression("lambda s: s.upper()")`, from `portwri
 
 ## Benchmarks
 
-Write `/work/checks/benchmarks.json`: 3 to 10 realistic workloads.
+Write `/work/checks/benchmarks.json`: 3 to 10 realistic workloads. JSON has no tuples, so write a tuple argument as `{"__tuple__": [...]}`; a plain list is passed as a list.
 
 ```json
 [{"name": "short_parse", "target": "parse", "args": ["{} {}", "a b"], "kwargs": {}}]

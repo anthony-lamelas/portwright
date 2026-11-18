@@ -9,6 +9,11 @@
 
 This report shows the port matched the original on the inputs tested. It doesn't prove the two are equivalent.
 
+## Changes since this report (by hand, not a new run)
+
+`vendor/pc_re` and `vendor/pc_datetime` were replaced with the current crates (harness issues #84 and #86): pc_re now raises `re`'s `FutureWarning`s and refuses `re.DEBUG`, and pc_datetime follows its shim's tightened domain. isodate uses neither crate's shim-level functions, only their regex engine, dates and timedeltas, so only the error mapping in `crates/isodate-port-py/src/errors.rs` changed. Re-checked in the toolchain image (CPython 3.12.14, seed 20261101, 150 examples), with warnings compared: no differences across 37,856 calls outside the approved list below, and 278 of 280 upstream tests pass (the same two `monkeypatch` tests fail). Fuzzing for 30 s per target found no crashes in its 10 targets. The gate table and figures below are from the original run.
+
+
 ## Gates
 | Gate | Result | Detail |
 | --- | --- | --- |

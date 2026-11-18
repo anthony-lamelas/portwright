@@ -377,8 +377,9 @@ pub fn compile_cached(pattern: &[u32], flags_value: &Value) -> Result<Arc<Patter
 /// parse tree and sre bytecode, so the shim refuses it after checking the text
 /// arguments and before `re` sees the flags.
 fn refuse_debug(flags_value: &Value) -> Result<()> {
+    // DEBUG is bit 7; `bit` reads two's complement for negative ints, as `&` does.
     if let Value::Int(n) = flags_value {
-        if (n & BigInt::from(flags::DEBUG)) != BigInt::zero() {
+        if n.bit(u64::from(flags::DEBUG.trailing_zeros())) {
             return Err(Error::Value(
                 "pc_re doesn't support re.DEBUG, which prints CPython's internal parse tree"
                     .to_owned(),

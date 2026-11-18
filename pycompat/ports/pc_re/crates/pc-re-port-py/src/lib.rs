@@ -4,10 +4,10 @@
 #![forbid(unsafe_code)]
 
 use pc_re_port_core::args::ArgSource;
-use pc_re_port_core::{api, flags, pyrepr, Error, PyStr, ReError, Value};
+use pc_re_port_core::{api, flags, pyrepr, warnings, Error, PyStr, ReError, Value};
 use pyo3::exceptions::{
-    PyAttributeError, PyException, PyIndexError, PyMemoryError, PyOverflowError, PyRecursionError,
-    PyTypeError, PyValueError,
+    PyAttributeError, PyException, PyFutureWarning, PyIndexError, PyMemoryError, PyOverflowError,
+    PyRecursionError, PyTypeError, PyValueError,
 };
 use pyo3::prelude::*;
 use pyo3::types::{
@@ -15,6 +15,7 @@ use pyo3::types::{
     PyTuple, PyWeakrefMethods, PyWeakrefReference,
 };
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::sync::{Arc, Mutex, OnceLock};
 
 /// Containers nested deeper than this raise `RecursionError`, as CPython's
@@ -474,6 +475,16 @@ impl PyReError {
 // ---------------------------------------------------------------------------
 // Functions
 
+/// Raises the `FutureWarning`s the core recorded during the call, in order, as
+/// `re`'s parser does before it returns or raises.
+fn raise_warnings(py: Python<'_>) -> PyResult<()> {
+    for message in warnings::take() {
+        let text = CString::new(message).map_err(|e| PyValueError::new_err(e.to_string()))?;
+        PyErr::warn(py, py.get_type::<PyFutureWarning>().as_any(), &text, 1)?;
+    }
+    Ok(())
+}
+
 macro_rules! api_functions {
     ($($name:ident),* $(,)?) => {
         $(
@@ -485,8 +496,10 @@ macro_rules! api_functions {
             ) -> PyResult<Bound<'py, PyAny>> {
                 let py = args.py();
                 let (values, keywords) = convert_call(args, kwargs)?;
-                let result = api::$name(&values, &keywords).map_err(|e| to_pyerr(py, e))?;
-                to_py(py, &result)
+                drop(warnings::take()); // left by a call that never returned
+                let result = api::$name(&values, &keywords);
+                raise_warnings(py)?;
+                to_py(py, &result.map_err(|e| to_pyerr(py, e))?)
             }
         )*
     };

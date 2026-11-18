@@ -72,3 +72,12 @@ def test_files_outside_the_package_are_left_alone(tmp_path):
     copy = tmp_path / "copy"
     copy.mkdir()
     assert write_build_time_files(source, "src/lib", copy) == []
+
+
+def test_benchmark_arguments_can_be_tuples():
+    """JSON has no tuples, and four of pc_datetime's benchmarks passed lists its shim refuses (#87)."""
+    from portwright.gates.bench import from_json
+
+    value = from_json([{"__tuple__": [1, {"__tuple__": [2]}]}, [3], {"k": {"__tuple__": []}}, {"__tuple__": 1}])
+    assert value == [(1, (2,)), [3], {"k": ()}, {"__tuple__": 1}]
+    assert type(value[0]) is tuple and type(value[1]) is list

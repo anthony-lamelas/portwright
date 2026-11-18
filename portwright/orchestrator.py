@@ -104,6 +104,9 @@ class Config:
     # less than this share of them. 0 turns the check off.
     task_coverage_minimum: float = 30.0
     task_coverage_lines: int = 50
+    # Review the library for inputs that reach behavior outside its own code before the
+    # checks phase. Always on for shims (strict_bindings); any run can ask for it.
+    domain_review: bool = False
 
 
 class Porter:
@@ -530,7 +533,7 @@ class Porter:
         if broken:
             feedback.append(
                 "These benchmarks raise on the original, so they measure nothing. Fix their arguments "
-                "(JSON has no tuples: a list is passed as a list):\n" + json.dumps(broken, indent=1)[:2000]
+                "(JSON has no tuples: a list is passed as a list; write a tuple as {\"__tuple__\": [...]}):\n" + json.dumps(broken, indent=1)[:2000]
             )
         return all(g.passed for g in (self_check, coverage, canaries)), "\n\n".join(feedback)
 
@@ -561,7 +564,7 @@ class Porter:
             "test_writer", "benchmarks",
             "Stage: benchmarks. Your checks passed. These benchmarks in /work/checks/benchmarks.json raise on the "
             "original, so they measure nothing. Fix their arguments, or replace them with benchmarks of the same "
-            "APIs that run (JSON has no tuples: a list is passed as a list). Change only benchmarks.json; other "
+            "APIs that run (JSON has no tuples: a list is passed as a list; write a tuple as {\"__tuple__\": [...]}). Change only benchmarks.json; other "
             "changes are discarded.\n" + json.dumps(broken, indent=1)[:3000],
             self._test_writer_mounts(),
         )
@@ -587,21 +590,29 @@ class Porter:
         return {str(self.paths.checks): "/work/checks", **dict(extra)}
 
     def _review_domain(self) -> None:
-        """For a shim over Python's built-ins, have a reviewer list inputs that reach
-        behavior outside the built-in each function names, before anything is written.
+        """Have a reviewer list inputs that reach behavior a Rust port can't reproduce
+        from the library's own code, before anything is written.
 
-        Each such gap used to surface late: Decimal arguments in the port phase, format
-        fields reaching attributes after review, each costing a debugger round or a
-        restart (open item I). Gaps stop the run here, before checks or Rust exist, so a
-        person can tighten the shim or accept them.
+        For a shim over Python's built-ins (``--strict-bindings``) that is anything
+        outside the built-in each function names. Each such gap used to surface late:
+        Decimal arguments in the port phase, format fields reaching attributes after
+        review, each costing a debugger round or a restart (open item I). Any library
+        can ask for the same review with ``--domain-review``: isodate leans on
+        ``strftime`` and the time zone without naming them (open item X). Gaps stop the
+        run here, before checks or Rust exist, so a person can close or accept them.
         """
         state = self.run_state.read()
-        if not self.config.strict_bindings or state.get("domain_review_accepted"):
+        shim = self.config.strict_bindings
+        if not (shim or self.config.domain_review) or state.get("domain_review_accepted"):
             return
+        kind = "shim" if shim else "library"
+        outside = "the built-ins" if shim else "the library's own code"
         result = self._agent(
             "domain_reviewer", "domain",
-            f"Review the domain of the shim `{self.config.module}` in /work/upstream/src. Public API:\n"
-            + "\n".join(self.api),
+            f"Review the domain of the {kind} `{self.config.module}` in /work/upstream/src. "
+            + ("It is a shim over Python's built-ins." if shim else
+               "It is an ordinary library: report inputs that reach behavior outside its own code.")
+            + " Public API:\n" + "\n".join(self.api),
             {},
         )
         produced = sorted(self.paths.sessions.glob("*-domain_reviewer-domain/out/domain.json"))
@@ -617,14 +628,22 @@ class Porter:
             return
         atomic_write(self.paths.control / "domain_review.json", json.dumps(leaks, indent=1))
         if not leaks:
-            self._record(GateResult("domain_review", True, "the reviewer found no input that reaches behavior outside the built-ins", {}))
+            self._record(GateResult("domain_review", True, f"the reviewer found no input that reaches behavior outside {outside}", {}))
             return
         names = sorted({str(leak.get("api", "?")) for leak in leaks if isinstance(leak, dict)})
-        self._record(GateResult("domain_review", False, f"{len(leaks)} inputs reach behavior outside the built-ins, in {', '.join(names[:12])}", {"leaks": leaks}))
+        self._record(GateResult("domain_review", False, f"{len(leaks)} inputs reach behavior outside {outside}, in {', '.join(names[:12])}", {"leaks": leaks}))
+        accept = (
+            f"accept them with `python -m portwright.cli approve --run-dir {self.config.run_dir} --domain` "
+            "and run again with --redo checks"
+        )
+        if shim:
+            remedy = f"Fix the shim and run again with --redo intake, or {accept}."
+        else:
+            remedy = (f"The library can't be changed, so {accept}; record how agents should treat them first with "
+                      "`portwright.cli decide`, if they need a ruling.")
         raise RunStopped(
-            f"the shim's domain has {len(leaks)} gaps a person should close before porting; see "
-            f"{self.paths.control / 'domain_review.md'}. Fix the shim and run again with --redo intake, or accept them "
-            f"with `python -m portwright.cli approve --run-dir {self.config.run_dir} --domain` and run again with --redo checks."
+            f"the {kind}'s domain has {len(leaks)} gaps a person should look at before porting; see "
+            f"{self.paths.control / 'domain_review.md'}. {remedy}"
         )
 
     def _phase_checks(self) -> None:

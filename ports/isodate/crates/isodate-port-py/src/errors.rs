@@ -56,7 +56,9 @@ pub fn builtin_error(py: Python<'_>, error: PyError) -> PyErr {
                 PyOSError::new_err((*errno, message(strerror)?))
             }
             // isodate never looks up keys or compiles user patterns; keep the text.
-            PyError::KeyError(_) | PyError::ReError(_) => PyKeyError::new_err(error.to_string()),
+            PyError::KeyError(_) | PyError::ReError { .. } => {
+                PyKeyError::new_err(error.to_string())
+            }
         })
     };
     build().unwrap_or_else(|e| e)
