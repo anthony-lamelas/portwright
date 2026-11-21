@@ -9,6 +9,11 @@
 
 This report shows the port matched the original on the inputs tested. It doesn't prove the two are equivalent.
 
+## Re-checked since this report (by hand, not a new run)
+
+In the toolchain image (CPython 3.12.14, seed 20261101, 150 examples), after the harness started comparing warnings (harness issue #84): no differences across 71,258 calls, and 113 of 115 upstream tests pass (the same two date-mocking tests fail). The code is unchanged.
+
+
 ## Gates
 | Gate | Result | Detail |
 | --- | --- | --- |

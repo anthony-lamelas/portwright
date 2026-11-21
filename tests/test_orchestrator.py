@@ -278,3 +278,23 @@ def test_a_shims_domain_gaps_stop_the_run_before_any_checks(source):
     porter._phase_checks()  # accepted: no second review, and the checks go ahead
     assert sum(call.startswith("domain_reviewer") for call in agents.calls) == 1
     assert any(call.startswith("test_writer") for call in agents.calls)
+
+
+def test_any_library_can_ask_for_the_domain_review(source):
+    """Only shims got a domain review; isodate leans on strftime without naming it (open item X)."""
+    agents = FakeAgents()
+    agents.domain_leaks = [{"api": "slug", "input": "slug(obj)", "reaches": "obj.__str__", "suggestion": "imitate"}]
+    config = make_config(source, "domain-library", domain_review=True)
+    porter = Porter(config, agents)
+    porter._phase_intake()
+    with pytest.raises(Exception) as stopped:
+        porter._phase_checks()
+    assert "library's domain has 1 gaps" in str(stopped.value) and "can't be changed" in str(stopped.value)
+    prompt = next(p for c, p in zip(agents.calls, agents.prompts) if c.startswith("domain_reviewer"))
+    assert "ordinary library" in prompt
+    # Off by default for a library.
+    plain = FakeAgents()
+    porter = Porter(make_config(source, "domain-off"), plain)
+    porter._phase_intake()
+    porter._phase_checks()
+    assert not any(call.startswith("domain_reviewer") for call in plain.calls)

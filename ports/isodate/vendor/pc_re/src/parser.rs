@@ -787,8 +787,21 @@ fn range_error(source: &Source<'_>, this: Tok, that: Tok) -> Error {
     source.error(m, this.len() + 1 + that.len())
 }
 
+/// The kind of set operation CPython warns that a doubled `-&~|` may become.
+fn set_operation(c: u32) -> &'static str {
+    match char::from_u32(c) {
+        Some('-') => "difference",
+        Some('&') => "intersection",
+        Some('~') => "symmetric difference",
+        _ => "union",
+    }
+}
+
 fn parse_set(source: &mut Source<'_>) -> Result<Node> {
     let here = source.tell() - 1;
+    if source.next_is('[') {
+        crate::warnings::future(format!("Possible nested set at position {}", source.tell()));
+    }
     let negate = source.matches('^')?;
     let mut set: Vec<SetItem> = Vec::new();
     let to_item = |code: ClassCode| match code {
@@ -805,6 +818,14 @@ fn parse_set(source: &mut Source<'_>) -> Result<Node> {
         let code1 = if this.esc.is_some() {
             source.within(source.depth + 1, |s| class_escape(s, this))?
         } else {
+            if !set.is_empty() && this.is_in("-&~|") && source.next.is_some_and(|next| next == this)
+            {
+                crate::warnings::future(format!(
+                    "Possible set {} at position {}",
+                    set_operation(this.c),
+                    source.tell() - 1
+                ));
+            }
             ClassCode::Literal(this.c)
         };
         if source.matches('-')? {
@@ -819,6 +840,12 @@ fn parse_set(source: &mut Source<'_>) -> Result<Node> {
             let code2 = if that.esc.is_some() {
                 source.within(source.depth + 1, |s| class_escape(s, that))?
             } else {
+                if that.is('-') {
+                    crate::warnings::future(format!(
+                        "Possible set difference at position {}",
+                        source.tell() - 2
+                    ));
+                }
                 ClassCode::Literal(that.c)
             };
             match (code1, code2) {

@@ -208,3 +208,56 @@ def test_builds_and_gate_runs_check_free_space_first(tmp_path, monkeypatch):
     with pytest.raises(resources.LowDiskSpace):
         isolation.run(["python3", "-c", "pass"], cwd=tmp_path)
     assert started == []
+
+
+# ---------------------------------------------------------------- V: machine-wide gate memory
+
+
+def test_gates_and_agents_have_separate_pools(tmp_path):
+    agents = resources.AgentBudget(tmp_path, total_mb=1000)
+    gates = resources.GateBudget(tmp_path, total_mb=500)
+    assert agents.try_reserve(1000) is not None
+    assert gates.try_reserve(500) is not None  # the agents' pool doesn't count here
+    assert gates.try_reserve(1) is None
+    assert {path.name for path in tmp_path.glob("*.json")} == {"agents.json", "gates.json"}
+
+
+def test_gate_containers_hold_their_memory_while_they_run(tmp_path, monkeypatch):
+    """Three mutation workers, three fuzz targets and parallel tasks' gates could each take
+    a full gate container's memory at once (open item V)."""
+    monkeypatch.setenv("PORTWRIGHT_BUDGET_DIR", str(tmp_path / "budget"))
+    monkeypatch.setenv("PORTWRIGHT_GATE_MEMORY", "1g")
+    monkeypatch.setattr(isolation, "enabled", lambda: True)
+    monkeypatch.delenv("PORTER_IN_SANDBOX", raising=False)
+    REPO_TARGET.mkdir(parents=True, exist_ok=True)
+    held = []
+
+    def fake_run(command, **kwargs):
+        if command[:2] == ["docker", "run"]:
+            held.append(resources.gate_budget().in_use_mb())
+        return subprocess.CompletedProcess(command, 0, "", "")
+    monkeypatch.setattr(isolation.subprocess, "run", fake_run)
+    monkeypatch.setattr(toolchain.subprocess, "run", fake_run)
+    isolation.run(["python3", "-c", "pass"], cwd=REPO_TARGET)
+    toolchain.run_in_toolchain(["cargo", "build"], REPO_TARGET, fetch=False, memory="3g")
+    assert held == [1024, 3072]
+    assert resources.gate_budget().in_use_mb() == 0
+
+
+def test_a_gate_waits_while_the_pool_is_full(tmp_path, monkeypatch):
+    import threading
+
+    budget = resources.GateBudget(tmp_path, total_mb=1000, poll_seconds=0.05)
+    first = budget.try_reserve(700)
+    order = []
+
+    def second():
+        with budget.reserve(700):
+            order.append("second")
+    thread = threading.Thread(target=second)
+    thread.start()
+    time.sleep(0.3)
+    order.append("first done")
+    budget.release(first)
+    thread.join(5)
+    assert order == ["first done", "second"]

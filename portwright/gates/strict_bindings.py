@@ -30,12 +30,20 @@ from portwright.gates.rust_source import (
 # Each entry only copies data across the boundary. Taken from pc_format's bindings.
 ALLOWED_FFI = {
     "Py_ssize_t": "C's ssize_t, a type",
+    "PyTypeObject": "the type struct, as a pointer type to compare exact types by address (reading its slots is refused below)",
     "PyUnicode_4BYTE_KIND": "the constant naming UCS-4 string storage",
     "PyUnicode_AsUCS4Copy": "copies a str's code points, lone surrogates included, into a new buffer",
     "PyUnicode_FromKindAndData": "builds a str from a buffer of code points",
     "PyMem_Free": "frees the buffer PyUnicode_AsUCS4Copy returned",
     "PyLong_AsLongLongAndOverflow": "reads an int's value, flagging overflow (callers pass exact ints: on other objects it calls __index__)",
 }
+# Rust's own C-string types, which only hold bytes. A warning's message reaches
+# PyErr::warn as a &CStr, so raising warnings needs them. Allowed only by their full
+# std::ffi path, and renaming anything to std is refused. (pc_format names its own
+# core crate `core`, so core::ffi isn't trusted the same way.)
+STD_FFI = {"CString", "CStr", "NulError"}
+_STD_PATH = re.compile(r"(?:^|[^\w:])(?:::\s*)?std\s*::\s*$")
+_STD_ALIAS = re.compile(r"\bas\s+std\s*(?:[;,}]|$)")  # a rename; `as std::os::raw::c_int` is a cast
 # PyO3's own conversions for these features are plain data copies. Others run Python:
 # rust_decimal and bigdecimal call str() and decimal.Decimal(), chrono calls tzinfo
 # methods, num-rational reads Fraction attributes, uuid and chrono-tz import modules.
@@ -230,11 +238,21 @@ def _dispatch_problems(file: RustFile, spans: list[tuple[int, int]] | None = Non
         args, _ = call_args(code, match.end() - 1)
         if not _codec_arguments_allowed(file, args[1:]):
             found.append((match.start(), f"decodes with a codec that isn't on the list ({', '.join(sorted(ALLOWED_CODECS))})"))
+    for match in _STD_ALIAS.finditer(code):
+        if inside(match.start()):
+            found.append((match.start(), "renames something to std, which would hide what a std:: path names"))
     for match in re.finditer(r"\bffi\b", code):
         if not inside(match.start()):
             continue
         rest = code[match.end():]
         separator = re.match(r"\s*::\s*", rest)
+        if separator and _STD_PATH.search(code[max(0, match.start() - 40):match.start()]):
+            rest = rest[separator.end():]
+            names = rest[1:rest.find("}")].split(",") if rest.startswith("{") else [re.match(r"\w*", rest).group(0)]
+            for name in (part.split(" as ")[0].strip() for part in names):
+                if name not in STD_FFI:
+                    found.append((match.start(), f"uses std::ffi::{name or '*'}; only {', '.join(sorted(STD_FFI))} are allowed"))
+            continue
         if not separator:
             if re.match(r"\s+as\b", rest):
                 found.append((match.start(), "renames pyo3::ffi, which hides which C functions it calls"))

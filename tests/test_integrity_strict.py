@@ -232,6 +232,9 @@ def test_a_real_wheel_passes_and_the_reviewers_wheel_fails():
         "use pyo3::ffi as raw;",
         "use pyo3::ffi::*;",
         'unsafe extern "C" { fn PyObject_Repr(o: *mut u8) -> *mut u8; }',
+        # std::ffi is allowed for C strings only, and nothing may pose as std.
+        "use pyo3 as std; fn a() { let _ = std::ffi::PyObject_Repr; }",
+        "use std::ffi::OsString;",
         # PyO3's Display and Debug call str() and repr().
         "fn a(x: &Bound<'_, PyAny>) -> String { x.to_string() }",
         'fn a(x: &Bound<\'_, PyAny>) -> String { format!("{:?}", 1) }',
@@ -262,6 +265,17 @@ def test_strict_bindings_reject(tmp_path, code):
     add_to_bindings(port, code)
     found = problems(port)
     assert any("calls into Python" in p for p in found), found
+
+
+def test_strict_bindings_may_raise_warnings(tmp_path):
+    """pc_re raises re's FutureWarnings, whose message reaches PyErr::warn as a C string."""
+    port = make_port(tmp_path)
+    add_to_bindings(port, (
+        "fn warn(py: Python<'_>, message: String) -> PyResult<()> {\n"
+        "    let text = std::ffi::CString::new(message).map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;\n"
+        "    PyErr::warn(py, py.get_type::<pyo3::exceptions::PyFutureWarning>().as_any(), &text, 1)\n}\n"
+    ))
+    assert problems(port) == []
 
 
 def test_strict_bindings_scan_a_sibling_crate_that_depends_on_pyo3(tmp_path):
@@ -361,8 +375,10 @@ def test_dependencies_from_outside_crates_io_or_the_port_fail(tmp_path):
 FINISHED = [
     ("pycompat/ports/pc_format", "pc_format", True),
     ("pycompat/ports/pc_unicode", "pc_unicode", True),
-    ("pycompat/ports/pc_re", "pc_re", False),
+    ("pycompat/ports/pc_re", "pc_re", True),
+    ("pycompat/ports/pc_datetime", "pc_datetime", True),
     ("ports/parse", "parse", False),
+    ("ports/isodate", "isodate", False),
 ]
 
 

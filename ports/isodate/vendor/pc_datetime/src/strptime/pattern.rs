@@ -213,12 +213,14 @@ fn translate(p: &[u32]) -> PyResult<String> {
                         .unwrap_or(p.len());
                     let name = p[name_start..name_end].to_vec();
                     if let Some((_, first)) = names.iter().find(|(n, _)| *n == name) {
-                        return Err(PyError::ReError(PyStr::from(format!(
-                            "redefinition of group name {} as group {groups}; was group \
-                             {first} at position {}",
-                            PyStr::from_code_points(name).repr(),
-                            name_start
-                        ))));
+                        return Err(PyError::re_error(
+                            format!(
+                                "redefinition of group name {} as group {groups}; was group {first}",
+                                PyStr::from_code_points(name).repr()
+                            ),
+                            PyStr::from_code_points(p.to_vec()),
+                            name_start,
+                        ));
                     }
                     names.push((name, groups));
                     i = copy_until(&mut out, i, cp('>'));

@@ -11,6 +11,11 @@
 
 This report shows the port matched the original on the inputs tested. It doesn't prove the two are equivalent.
 
+## Changes since this report (by hand, not a new run)
+
+- **`timezone_name(None)`** (harness issue #79) now raises the shim's fixed `TypeError("timezone_name needs a UTC offset in seconds, not None")` in both the shim and the core, instead of Python's own `AttributeError` text, which the person-granted change below reproduced.
+- **This port predates the shim's domain checks (#55).** Against the current shim, 5 of its 36 tests fail (value tuples, `strftime` extensions, float offsets, the `fromtimestamp` error), and the differential finds the matching differences. Rebuilding it against the current shim is an open item.
+
 ## Gates
 | Gate | Result | Detail |
 | --- | --- | --- |
@@ -56,6 +61,11 @@ None.
 
 ## Approved differences
 None.
+
+## Rulings by a person
+Agents had to follow these. Some accept differences that the list above doesn't show.
+
+- Granted: you may now change crates/pc-datetime-port-core/src/error.rs, crates/pc-datetime-port-py/src/convert.rs. Answer to the shared_change request 'PyError::AttributeError': add an AttributeError variant to PyError (with type_name and Display), map it to PyAttributeError in convert.rs, and use it for timezone_name(None), which raises AttributeError("'NoneType' object has no attribute 'tzname'") in the original.
 
 ## Differences agents proposed (not approved unless listed above)
 The final comparison finds no differences outside the approved list. So each proposal below was fixed later, is covered by an approved difference or a ruling, or concerns inputs the comparison doesn't judge, such as calls where the original times out.

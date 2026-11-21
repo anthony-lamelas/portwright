@@ -52,6 +52,7 @@ def _load_or_create_config(options) -> Config:
             canaries_path=options.canaries, reference_note=options.reference_note or "",
             vendor=dict(item.split("=", 1) for item in options.vendor or []),
             strict_bindings=options.strict_bindings,
+            domain_review=getattr(options, "domain_review", False),
             seed_crates={name: str(Path(path).resolve()) for name, path in (item.split("=", 1) for item in options.seed or [])},
         )
         config.vendor = {name: str(Path(path).resolve()) for name, path in config.vendor.items()}
@@ -59,6 +60,8 @@ def _load_or_create_config(options) -> Config:
         config.max_agents = options.max_agents
     if options.strict_bindings:  # can be turned on for a run already started, never off
         config.strict_bindings = True
+    if getattr(options, "domain_review", False):  # takes effect at the next checks phase, or --redo checks
+        config.domain_review = True
     if options.model:
         config.model = options.model
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -218,6 +221,8 @@ def main(argv=None) -> int:
                      help="earlier code agents may start from, copied to seed/NAME, not frozen (repeatable)")
     run.add_argument("--strict-bindings", action="store_true",
                      help="for ports of Python's built-ins: the PyO3 layer can't call into Python")
+    run.add_argument("--domain-review", action="store_true",
+                     help="before the checks, have a reviewer list inputs that reach behavior outside the library's own code (always on with --strict-bindings)")
     run.add_argument("--max-agents", type=int)
     run.add_argument("--model")
     run.add_argument("--wait", action="store_true", help="wait out usage limits instead of pausing")

@@ -20,6 +20,22 @@ from portwright.toolchain import host_target_dir, run_in_toolchain
 NOISE = 0.05
 
 
+TUPLE_KEY = "__tuple__"
+
+
+def from_json(value):
+    """A benchmark argument as Python: ``{"__tuple__": [...]}`` is a tuple, since JSON has
+    none. pc_datetime's values are tuples, and four of its benchmarks passed lists, which
+    its shim refuses, so they measured nothing."""
+    if isinstance(value, dict):
+        if set(value) == {TUPLE_KEY} and isinstance(value[TUPLE_KEY], list):
+            return tuple(from_json(item) for item in value[TUPLE_KEY])
+        return {key: from_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [from_json(item) for item in value]
+    return value
+
+
 def load_benchmarks(checks_dir) -> list[dict]:
     path = Path(checks_dir) / "benchmarks.json"
     return json.loads(path.read_text()) if path.exists() else []
@@ -54,8 +70,8 @@ def _run_benchmarks_here(side: dict, benchmarks: list[dict], samples: int) -> di
                 {
                     "op": "bench",
                     "path": bench["target"],
-                    "args": [wire.encode(item) for item in bench.get("args", [])],
-                    "kwargs": {key: wire.encode(item) for key, item in bench.get("kwargs", {}).items()},
+                    "args": [wire.encode(from_json(item)) for item in bench.get("args", [])],
+                    "kwargs": {key: wire.encode(from_json(item)) for key, item in bench.get("kwargs", {}).items()},
                     "samples": samples,
                 }
             )

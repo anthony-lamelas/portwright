@@ -35,6 +35,9 @@ const EPOCH_ORDINAL: i64 = 719_163;
 pub fn strftime(args: &[Value], kwargs: &Kwargs) -> PyResult<Value> {
     let v = crate::timedelta::bind_ref("strftime", &PARAMS, args, kwargs)?;
     let d = dt_in(&v[0])?;
+    if let Value::Str(fmt) = &*v[1] {
+        check_directives(fmt.code_points())?;
+    }
     let Value::Str(fmt) = &*v[1] else {
         let name = match &*v[1] {
             Value::None => "None",
@@ -44,11 +47,78 @@ pub fn strftime(args: &[Value], kwargs: &Kwargs) -> PyResult<Value> {
             "strftime() argument 1 must be str, not {name}"
         )));
     };
-    let wrapped = wrap_strftime(d, fmt.code_points());
+    Ok(Value::Str(format_glibc(d, fmt.code_points())))
+}
+
+/// `d.strftime(fmt)` exactly as CPython runs it on glibc, flags, widths and GNU
+/// extensions included (`%-d`, `%_H`, `%s`, `%10Y`). The shim refuses those, so its
+/// [`strftime`] checks the format first; Rust callers that need glibc's output can use
+/// this directly.
+#[must_use]
+pub fn format_glibc(d: DateTime, fmt: &[u32]) -> PyStr {
+    let wrapped = wrap_strftime(d, fmt);
     let tm = Tm::new(d);
-    Ok(Value::Str(PyStr::from_code_points(time_strftime(
-        &wrapped, &tm,
-    ))))
+    PyStr::from_code_points(time_strftime(&wrapped, &tm))
+}
+
+/// The shim's `_STRFTIME_DIRECTIVES`: the C89 directives plus those CPython documents.
+fn is_directive(c: u32) -> bool {
+    matches!(
+        char::from_u32(c),
+        Some(
+            'a' | 'A'
+                | 'b'
+                | 'B'
+                | 'c'
+                | 'd'
+                | 'f'
+                | 'G'
+                | 'H'
+                | 'I'
+                | 'j'
+                | 'm'
+                | 'M'
+                | 'p'
+                | 'S'
+                | 'u'
+                | 'U'
+                | 'V'
+                | 'w'
+                | 'W'
+                | 'x'
+                | 'X'
+                | 'y'
+                | 'Y'
+                | 'z'
+                | 'Z'
+                | '%'
+        )
+    )
+}
+
+/// The shim's `_check_strftime_format`: every `%` starts `%:z` or a directive
+/// [`is_directive`] accepts, with no flags or widths, which the C library would decide.
+///
+/// # Errors
+/// The shim's fixed ValueError.
+fn check_directives(fmt: &[u32]) -> PyResult<()> {
+    const PERCENT: u32 = '%' as u32;
+    let mut rest = fmt;
+    while let Some(at) = rest.iter().position(|&c| c == PERCENT) {
+        match &rest[at + 1..] {
+            [colon, z, tail @ ..] if *colon == u32::from(':') && *z == u32::from('z') => {
+                rest = tail
+            }
+            [c, tail @ ..] if is_directive(*c) => rest = tail,
+            _ => {
+                return Err(PyError::value_error(
+                    "pc_datetime's strftime supports only the C89 and CPython-documented \
+                     directives, without flags or widths",
+                ))
+            }
+        }
+    }
+    Ok(())
 }
 
 // ------------------------------------------------------------------ wrap_strftime
@@ -618,11 +688,37 @@ fn convert(
 mod tests {
     use super::*;
 
-    fn fmt(d: [i64; 7], offset: Option<i64>, f: &str) -> PyResult<Value> {
+    fn value(d: [i64; 7], offset: Option<i64>) -> Value {
         let mut items: Vec<Value> = d.iter().map(|&n| Value::int(n)).collect();
         items.push(offset.map_or(Value::None, Value::int));
         items.push(Value::int(0));
-        strftime(&[Value::tuple(items), Value::str(f)], &[])
+        Value::tuple(items)
+    }
+
+    /// glibc's output, flags and extensions included.
+    fn fmt(d: [i64; 7], offset: Option<i64>, f: &str) -> PyResult<Value> {
+        let dt = dt_in(&value(d, offset))?;
+        Ok(Value::Str(format_glibc(dt, PyStr::from(f).code_points())))
+    }
+
+    #[test]
+    fn the_shim_refuses_what_the_c_library_decides() {
+        let refused = PyError::value_error(
+            "pc_datetime's strftime supports only the C89 and CPython-documented \
+             directives, without flags or widths",
+        );
+        let d = value([2024, 1, 2, 3, 4, 5, 6], Some(0));
+        for f in ["%-d", "%_H", "%s", "%10Y", "%k", "%P", "%", "%:", "%Ey"] {
+            assert_eq!(
+                strftime(&[d.clone(), Value::str(f)], &[]),
+                Err(refused.clone()),
+                "{f}"
+            );
+        }
+        assert_eq!(
+            strftime(&[d, Value::str("%Y-%m-%dT%H:%M:%S.%f%:z %Z %%")], &[]),
+            Ok(Value::str("2024-01-02T03:04:05.000006+00:00 UTC %"))
+        );
     }
 
     #[test]

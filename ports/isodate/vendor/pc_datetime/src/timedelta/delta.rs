@@ -396,11 +396,16 @@ impl fmt::Display for TimeDelta {
     }
 }
 
-/// The shim's `_td_in(td)`: `timedelta(days=td[0], seconds=td[1], microseconds=td[2])`.
+/// The shim's timedelta fields, in order: `_TIMEDELTA`.
+pub const TIMEDELTA_FIELDS: [&str; 3] = ["days", "seconds", "microseconds"];
+
+/// The shim's `_td_in(td)`: `_fields(td, "timedelta", _TIMEDELTA)`, then
+/// `timedelta(days=td[0], seconds=td[1], microseconds=td[2])`.
 ///
 /// # Errors
-/// Indexing errors from `td`, then the constructor's errors.
+/// [`Value::shim_fields`]'s TypeErrors, then the constructor's errors.
 pub fn td_in(td: &Value) -> PyResult<TimeDelta> {
+    td.shim_fields("timedelta", &TIMEDELTA_FIELDS, None)?;
     let days = item(td, 0)?;
     let seconds = item(td, 1)?;
     let microseconds = item(td, 2)?;

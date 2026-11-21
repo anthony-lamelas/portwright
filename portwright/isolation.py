@@ -119,10 +119,12 @@ def run(
     # behind for long; the watchdog ends it sooner, once the heartbeat stops.
     inner = resources.watched(["timeout", "-k", str(KILL_GRACE_SECONDS), str(int(timeout)), *command], heartbeat)
     try:
-        done = subprocess.run(
-            [*docker, IMAGE, *inner], capture_output=True, text=True,
-            timeout=timeout + 2 * KILL_GRACE_SECONDS, check=False,
-        )
+        # The whole machine's gate containers share one pool (open item V).
+        with resources.gate_budget().reserve(resources.megabytes(memory), f"gate {name}"):
+            done = subprocess.run(
+                [*docker, IMAGE, *inner], capture_output=True, text=True,
+                timeout=timeout + 2 * KILL_GRACE_SECONDS, check=False,
+            )
     except subprocess.TimeoutExpired:
         subprocess.run(["docker", "kill", name], capture_output=True, check=False)
         raise

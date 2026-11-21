@@ -26,6 +26,7 @@ pub mod unicode;
 #[rustfmt::skip]
 mod unicode_tables;
 pub mod value;
+pub mod warnings;
 
 pub use error::{Error, ReError, Result};
 pub use matching::Match;
