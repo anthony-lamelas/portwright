@@ -35,6 +35,70 @@ class Side:
     module: str
     python: str = sys.executable
     coverage_file: str | None = None
+    # A port's side: its worker runs with install_guard, and with an environment that
+    # holds nothing about the run (the red-team read the original's path from it).
+    guard: bool = False
+    # A Unix socket where a worker host in another container starts this side's
+    # workers (portwright.compare.worker_host), so the port never runs where the
+    # original, the checks or the run's files are.
+    connect: str | None = None
+
+
+def worker_env() -> dict[str, str]:
+    """The environment a port's worker gets: worker settings, a PATH, and nothing about
+    the run. ``PORTER_CONFIG`` named the original's folder, and a port read it."""
+    keep = {key: value for key, value in os.environ.items() if key.startswith("PORTWRIGHT_WORKER_")}
+    return {**keep, "PATH": "/usr/local/bin:/usr/bin:/bin", "HOME": "/nonexistent", "LC_ALL": "C.UTF-8"}
+
+
+class _Connection:
+    """A worker reached through a worker host's socket, used like a Popen object."""
+
+    def __init__(self, path: str, timeout: float):
+        import socket
+        import time
+
+        deadline = time.monotonic() + timeout
+        while True:
+            try:
+                self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+                self.socket.connect(path)
+                break
+            except OSError:
+                self.socket.close()
+                if time.monotonic() > deadline:
+                    raise WorkerStartError(f"no worker host at {path}") from None
+                time.sleep(0.2)
+        self.stdin = self
+        self.stdout = self
+        self._done = False
+
+    # stdin
+    def write(self, data: bytes) -> None:
+        self.socket.sendall(data)
+
+    def flush(self) -> None:
+        pass
+
+    def close(self) -> None:
+        if not self._done:
+            self._done = True
+            self.socket.close()
+
+    # stdout
+    def fileno(self) -> int:
+        return self.socket.fileno()
+
+    # process
+    def poll(self):
+        return 0 if self._done else None
+
+    def wait(self, timeout=None):
+        self.close()
+        return None
+
+    def kill(self) -> None:
+        self.close()
 
 
 class Worker:
@@ -49,22 +113,28 @@ class Worker:
         self._closed = False
 
     def start(self) -> None:
-        command = [
-            self.side.python, "-I", str(WORKER_PATH),
-            "--module", self.side.module, "--path", self.side.path,
-        ]
-        if self.side.coverage_file:
-            command += ["--coverage", self.side.coverage_file]
-        self.process = subprocess.Popen(
-            command,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            cwd=self.side.path,
-        )
         self.generation += 1
         self._buffer = b""
         self._closed = False
+        if self.side.connect:
+            self.process = _Connection(self.side.connect, STARTUP_TIMEOUT)
+        else:
+            command = [
+                self.side.python, "-I", str(WORKER_PATH),
+                "--module", self.side.module, "--path", self.side.path,
+            ]
+            if self.side.coverage_file:
+                command += ["--coverage", self.side.coverage_file]
+            if self.side.guard:
+                command.append("--guard")
+            self.process = subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.DEVNULL,
+                cwd=self.side.path,
+                env=worker_env() if self.side.guard else None,
+            )
         ready = self._read_line(STARTUP_TIMEOUT)
         if ready is None or not json.loads(ready).get("ready"):
             detail = json.loads(ready).get("error") if ready else "no response"
@@ -107,7 +177,7 @@ class Worker:
         return {"kind": "timeout"}
 
     def _dead(self) -> dict:
-        code = self.process.wait()
+        code = self.process.wait()  # None through a worker host, which can't say
         self.process = None
         return {"kind": "crashed", "returncode": code}
 
@@ -300,6 +370,9 @@ class Session:
             difference = None
         else:
             difference = find_difference(strip_handles(left), strip_handles(right))
+        if right.get("kind") == "refused":
+            # The port ran code no port may run. Never approvable, whatever the original did.
+            difference = (f"refused: {'; '.join(right.get('refused', []))[:300]}", "", "refused")
         if difference:
             self._record_divergence(api, args, kwargs, left, right, difference)
         if left.get("kind") == "raised":
@@ -345,7 +418,7 @@ class Session:
             }
         except TypeError:
             entry.pop("input", None)  # calls on stored objects can't be replayed alone
-        if signature in self.approved:
+        if signature in self.approved and not where.startswith("refused"):
             return
         raise Divergence(message)
 

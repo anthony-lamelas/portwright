@@ -24,6 +24,7 @@ Decimal, raises TypeError, because its behavior comes from its own module.
 
 import datetime as _dt
 import os as _os
+import re as _re
 import time as _time
 
 _os.environ["TZ"] = "UTC"
@@ -258,8 +259,17 @@ def strftime(d, fmt):
 
 @_builtins_only
 def strptime(text, fmt):
-    """``datetime.strptime(text, fmt)``."""
-    return _dt_out(_dt.datetime.strptime(text, fmt))
+    """``datetime.strptime(text, fmt)``.
+
+    A format that repeats a directive makes ``_strptime`` build a regular expression with
+    a repeated group name, and ``re`` raises its own ``error``. That error's ``pattern``
+    holds ``%Z``'s alternatives in frozenset order, which follows the per-process hash
+    seed ("utc|gmt" or "gmt|utc"), so it is raised as a ValueError with the same message.
+    """
+    try:
+        return _dt_out(_dt.datetime.strptime(text, fmt))
+    except _re.error as error:
+        raise ValueError(str(error)) from None
 
 
 @_builtins_only

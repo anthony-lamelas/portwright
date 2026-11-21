@@ -187,3 +187,31 @@ def test_cases_built_from_a_set_keep_their_ids_across_runs(tmp_path):
     runs = [run_tests(tests, ref) for _ in range(3)]
     assert runs[0] == runs[1] == runs[2]
     assert len(runs[0]) == 30 and set(runs[0].values()) == {"passed"}
+
+
+def test_a_name_the_root_reexports_under_another_name_is_api(tmp_path):
+    """pytimeparse's callers use `parse`, which its root imports `as parse` (#89)."""
+    from portwright.manifest import extract_api
+
+    (tmp_path / "__init__.py").write_text("from .timeparse import timeparse as parse\nfrom .shapes import Box as Crate\n")
+    (tmp_path / "timeparse.py").write_text("def timeparse(s):\n    return s\n")
+    (tmp_path / "shapes.py").write_text("class Box:\n    def open(self):\n        pass\n")
+    api = extract_api(tmp_path)
+    assert {"parse", "timeparse.timeparse", "Crate", "Crate.open"} <= set(api), api
+
+
+def test_tests_inside_the_package_stay_out_of_its_copy_and_import_it_absolutely(tmp_path):
+    """pytimeparse keeps tests in pytimeparse/tests, named testtimeparse.py, importing
+    `from .. import timeparse`: none ran, and held-back tests reached agents (#89)."""
+    from portwright.gates.upstream_tests import _test_files, absolutize_package_imports
+    from portwright.orchestrator import _tests_inside
+
+    package = tmp_path / "lib"
+    (package / "tests").mkdir(parents=True)
+    (package / "tests" / "testlib.py").write_text("from .. import core\nfrom . import helpers\n")
+    assert _tests_inside(package, package / "tests") == {(package / "tests").resolve()}
+    assert _tests_inside(package, tmp_path / "tests") == set()
+    assert [p.name for p in _test_files(package / "tests")] == ["testlib.py"]
+    assert absolutize_package_imports(package / "tests", ["lib", "tests"]) == ["testlib.py"]
+    text = (package / "tests" / "testlib.py").read_text()
+    assert "from lib import core" in text and "from . import helpers" in text

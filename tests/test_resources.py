@@ -110,6 +110,7 @@ def _captured(monkeypatch, module):
         seen.append(command)
         return subprocess.CompletedProcess(command, 0, "", "")
     monkeypatch.setattr(module.subprocess, "run", fake_run)
+    monkeypatch.setattr(resources, "run_bounded", fake_run)  # gate containers run through it
     return seen
 
 
@@ -238,6 +239,7 @@ def test_gate_containers_hold_their_memory_while_they_run(tmp_path, monkeypatch)
         return subprocess.CompletedProcess(command, 0, "", "")
     monkeypatch.setattr(isolation.subprocess, "run", fake_run)
     monkeypatch.setattr(toolchain.subprocess, "run", fake_run)
+    monkeypatch.setattr(resources, "run_bounded", fake_run)
     isolation.run(["python3", "-c", "pass"], cwd=REPO_TARGET)
     toolchain.run_in_toolchain(["cargo", "build"], REPO_TARGET, fetch=False, memory="3g")
     assert held == [1024, 3072]
@@ -261,3 +263,48 @@ def test_a_gate_waits_while_the_pool_is_full(tmp_path, monkeypatch):
     budget.release(first)
     thread.join(5)
     assert order == ["first done", "second"]
+
+
+
+# ---------------------------------------------------------------- red-team: the host side of a gate (#88)
+
+
+def test_gate_output_keeps_only_its_end():
+    """A container that printed 668 MB grew the orchestrator to 2 GB."""
+    done = resources.run_bounded(
+        [sys.executable, "-c", "import sys\nfor i in range(2000):\n    sys.stdout.write('x' * 9999 + chr(10))\nprint('last line')"],
+        timeout=60, keep=100_000,
+    )
+    assert done.returncode == 0
+    assert len(done.stdout) <= 200_000 and done.stdout.endswith("last line\n")
+
+
+def test_a_gate_that_fills_the_disk_is_stopped(tmp_path, monkeypatch):
+    """The floor was only checked before a gate started (#81)."""
+    monkeypatch.setenv("PORTWRIGHT_MIN_FREE_GB", "1000000")  # below half of this at once
+    monkeypatch.setattr(resources, "DISK_CHECK_SECONDS", 0.1)
+    started = time.monotonic()
+    done = resources.run_bounded([sys.executable, "-c", "import time; time.sleep(60)"], timeout=120, disk=tmp_path)
+    assert time.monotonic() - started < 30
+    assert done.returncode == 125 and "free disk space fell" in done.stderr
+
+
+def test_links_and_pipes_in_a_port_are_refused_not_read(tmp_path):
+    """A FIFO named pipe.rs hung the host-side integrity gate; a link out of the port crashed it."""
+    import os
+
+    from portwright.gates.integrity import hash_tree, integrity_gate
+
+    port = tmp_path / "port"
+    (port / "crates" / "core" / "src").mkdir(parents=True)
+    os.mkfifo(port / "crates" / "core" / "src" / "pipe.rs")
+    outside = tmp_path / "outside.rs"
+    outside.write_text("fn main() {}\n")
+    (port / "crates" / "core" / "src" / "link.rs").symlink_to(outside)
+    started = time.monotonic()
+    result = integrity_gate(port, "textkit", core_crate="core")
+    assert time.monotonic() - started < 10
+    problems = "\n".join(result.details["problems"])
+    assert "pipe.rs: links and special files" in problems and "link.rs: links and special files" in problems
+    hashes = hash_tree(port)
+    assert hashes["crates/core/src/pipe.rs"] == "special" and hashes["crates/core/src/link.rs"].startswith("link:")

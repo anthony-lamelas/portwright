@@ -81,3 +81,13 @@ def test_benchmark_arguments_can_be_tuples():
     value = from_json([{"__tuple__": [1, {"__tuple__": [2]}]}, [3], {"k": {"__tuple__": []}}, {"__tuple__": 1}])
     assert value == [(1, (2,)), [3], {"k": ()}, {"__tuple__": 1}]
     assert type(value[0]) is tuple and type(value[1]) is list
+
+
+def test_mutants_that_can_never_build_are_left_out_of_the_sample():
+    """cargo-mutants writes PyResult::new(..) for PyO3 functions; 26 of isodate's 40 were these (#90)."""
+    from portwright.gates.mutation import _NEVER_BUILDS
+
+    assert _NEVER_BUILDS.match("PyResult::new(vec![])")
+    assert _NEVER_BUILDS.match("PyResult::from_iter([Default::default()])")
+    assert not _NEVER_BUILDS.match("Ok(Default::default())")
+    assert not _NEVER_BUILDS.match(">=")

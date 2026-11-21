@@ -13,8 +13,15 @@ This report shows the port matched the original on the inputs tested. It doesn't
 
 ## Changes since this report (by hand, not a new run)
 
-- **`timezone_name(None)`** (harness issue #79) now raises the shim's fixed `TypeError("timezone_name needs a UTC offset in seconds, not None")` in both the shim and the core, instead of Python's own `AttributeError` text, which the person-granted change below reproduced.
-- **This port predates the shim's domain checks (#55).** Against the current shim, 5 of its 36 tests fail (value tuples, `strftime` extensions, float offsets, the `fromtimestamp` error), and the differential finds the matching differences. Rebuilding it against the current shim is an open item.
+This port was built against the shim before its domain checks (#55), and was brought up to the current shim by hand (harness issue #86):
+
+- **Inputs** follow the shim's `_fields`: a date, time, datetime or timedelta must be a tuple of exactly its fields, all ints (bool counts), or a fixed `TypeError` names the problem. A `utcoffset` must be an int or None.
+- **`strftime`** accepts only the C89 and CPython-documented directives plus `%:z`, without flags or widths; anything else is the shim's fixed `ValueError`. The core's glibc formatter, with `%-d`, `%_H`, `%s` and the rest, stays available to Rust callers as `strftime::format_glibc`.
+- **`fromtimestamp`** past the C library's `gmtime` raises the shim's fixed `OverflowError` instead of glibc's `OSError` text, and **`timezone_name(None)`** the shim's fixed `TypeError` (#79).
+- **`re.error`** from `strptime` (a repeated directive) carries `msg`, `pattern`, `pos`, `lineno` and `colno`, which the comparison started checking with #52.
+- **Strict bindings** pass. The bindings read sets through the iterator protocol and a foreign type's name through `to_string()`, which the stricter checker from #54 refuses.
+- **Re-checked** in the toolchain image (CPython 3.12.14, seed 20261101, 150 examples), with warnings compared: no differences across 17,485 calls to 34 APIs, and all 36 shim tests pass. Four benchmarks passed lists, which the shim now refuses, and use `{"__tuple__": [...]}` instead (#87); benchmarks are within noise of the published build.
+- The gate table, planted-bug and mutation figures below are from the original run. Fuzzing was re-run for 30 s per target, with no crashes in 34 targets; Rust mutation wasn't re-run.
 
 ## Gates
 | Gate | Result | Detail |

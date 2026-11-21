@@ -50,14 +50,13 @@ _failures: list[dict] = []
 def pytest_sessionfinish(session, exitstatus) -> None:
     active = session_module.current()
     active.close()
-    Path(_config()["results"]).write_text(
-        json.dumps(
-            {
-                "exit_status": int(exitstatus),
-                "stats": active.stats,
-                "divergences": active.divergences,
-                "failures": _failures,
-            },
-            indent=1,
-        )
-    )
+    results = {"exit_status": int(exitstatus), "stats": active.stats, "divergences": active.divergences, "failures": _failures}
+    try:
+        text = json.dumps(results)
+    except RecursionError:
+        # An input nested deeper than JSON can encode here (pc_format's 900-deep
+        # containers): keep the difference and its example, drop the saved input.
+        for entry in active.divergences.values():
+            entry.pop("input", None)
+        text = json.dumps(results)
+    Path(_config()["results"]).write_text(text)

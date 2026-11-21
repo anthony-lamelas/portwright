@@ -16,8 +16,47 @@ from portwright.gates import GateResult
 MOCK_NAMES = {"mock", "Mock", "MagicMock", "patch", "monkeypatch"}
 
 
+# pytest's own pattern plus unittest's (`test*.py`): pytimeparse names its tests
+# `testtimeparse.py`, which pytest's default never collects, so none ran.
+TEST_FILE_PATTERNS = ("test*.py", "*_test.py")
+
+
 def _test_files(tests_dir: Path) -> list[Path]:
-    return sorted(path for path in tests_dir.rglob("*.py") if path.name.startswith("test_"))
+    return sorted(
+        path for path in tests_dir.rglob("*.py")
+        if path.name.startswith("test") or path.name.endswith("_test.py")
+    )
+
+
+def absolutize_package_imports(tests_dir: str | Path, location: list[str]) -> list[str]:
+    """Rewrite relative imports that reach out of a tests folder into absolute ones.
+
+    pytimeparse keeps its tests in ``pytimeparse/tests`` and imports with
+    ``from .. import timeparse``, which only works while the tests are a subpackage of
+    the library. Intake copies the tests on their own, so such an import becomes
+    ``from pytimeparse import timeparse``. ``location`` is the tests folder's dotted
+    place in the package (``["pytimeparse", "tests"]``). Imports within the tests stay
+    relative. Returns the files changed.
+    """
+    tests_dir = Path(tests_dir)
+    changed = []
+    for path in sorted(tests_dir.rglob("*.py")):
+        relative = path.relative_to(tests_dir).with_suffix("").parts
+        here = [*location, *relative[:-1]]  # the package a module (or __init__) is in
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        touched = False
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.level:
+                base = here[: len(here) - (node.level - 1)] if node.level - 1 <= len(here) else None
+                if not base or base[: len(location)] == location:
+                    continue  # stays inside the tests, or beyond the package
+                node.module = ".".join([*base, *([node.module] if node.module else [])])
+                node.level = 0
+                touched = True
+        if touched:
+            path.write_text(ast.unparse(tree), encoding="utf-8")
+            changed.append(str(path.relative_to(tests_dir)))
+    return changed
 
 
 def _held_out(name: str, seed: int, fraction: float) -> bool:
@@ -154,6 +193,7 @@ def run_tests(tests_dir: str | Path, side: dict, *, timeout: float = 900.0) -> d
             [
                 isolation.python(side.get("python", sys.executable)), "-m", "pytest", "tests",
                 "-q", "-p", "no:cacheprovider", "--import-mode=importlib",
+                "-o", f"python_files={' '.join(TEST_FILE_PATTERNS)}",
                 "-c", os.devnull, "--rootdir", str(scratch), f"--junitxml={report}",
             ],
             cwd=scratch, env=env, timeout=timeout, read=[library],

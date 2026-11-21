@@ -146,8 +146,9 @@ def decode(data, handles, evaluate=True):
     if tag == "handle":
         return handles.objects[value]
     if tag == "python":
-        # Comes only from check files, which run outside the library being tested.
-        return eval(value, {"__builtins__": __builtins__})  # noqa: S307
+        # Comes only from check files, which run outside the library being tested. The
+        # marker filename lets the guard tell check code from a port's (install_guard).
+        return eval(compile(value, CHECK_CODE, "eval"), {"__builtins__": __builtins__})  # noqa: S307
     raise ValueError(f"unknown input tag {tag}")
 
 
@@ -269,14 +270,22 @@ def canon(value, handles, depth=0, seen=()):
     if _is_iterator(value):
         return _drain(value, next_level)
     if callable(value) and hasattr(value, "__qualname__"):
-        return {"t": "callable", "v": value.__qualname__, "handle": handles.add(value)}
+        return {"t": "callable", "v": value.__qualname__, "module": _safe_module(value), "handle": handles.add(value)}
     return {
         "t": "object",
         "class": kind.__qualname__,
         "module": getattr(kind, "__module__", None),
         "repr": _ADDRESS.sub("0x_", _safe(repr, value)),
+        # The red-team's port returned an object that copied the original's class name,
+        # module and repr; its bases are harder to fake and now part of the outcome.
+        "mro": [_class_name(cls) for cls in kind.__mro__],
         "handle": handles.add(value),
     }
+
+
+def _safe_module(value):
+    module = getattr(value, "__module__", None)
+    return module if isinstance(module, str) or module is None else f"<{type(module).__qualname__}>"
 
 
 def _drain(iterator, next_level):
@@ -377,6 +386,162 @@ def run_benchmark(request, module, handles):
     return {"kind": "benchmark", "median_ns": samples[len(samples) // 2], "fastest_ns": samples[0], "loops": loops}
 
 
+# ---------------------------------------------------------------- the guard
+
+# The filename check expressions are compiled under. Code running inside them may
+# compile more (isodate's checks probe with exec): it is the checks' code, not the port's.
+CHECK_CODE = "<portwright-check>"
+# Only these standard-library files may compile source they made up themselves:
+# namedtuple and dataclasses build methods from text.
+_STRING_COMPILERS = ("collections/__init__.py", "dataclasses.py")
+# Events that let code inside the process reach Python behavior a port must not use,
+# or the worker's own state.
+_ALWAYS_REFUSED = {
+    "code.__new__": "builds a code object",
+    "gc.get_referrers": "searches the garbage collector for other objects",
+    "gc.get_objects": "searches the garbage collector for other objects",
+    "gc.get_referents": "searches the garbage collector for other objects",
+}
+_REFUSED_MODULES = ("ctypes", "_ctypes", "cffi")
+
+
+def _expression_sources(data, found):
+    """The Python expressions a request carries, which the worker itself evaluates.
+
+    A loop, not recursion: pc_format's checks pass containers nested 900 deep.
+    """
+    stack = [data]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, dict):
+            if item.get("t") == "python" and isinstance(item.get("v"), str):
+                found.add(item["v"])
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return found
+
+
+def install_guard(site):
+    """Refuse, inside a port's worker, everything that runs Python code a port shouldn't.
+
+    A port is compiled Rust. Any Python source it compiles and runs, whether through
+    ``py.run``, ``eval``, ``exec``, ``PyRun_String`` or an imported helper, raises the
+    ``compile`` audit event, and every way to unmarshal or build a code object raises
+    one too. CPython can't remove an audit hook once added, and this one is added
+    before the port is imported. It allows source that is a real file under the port's
+    folder or the standard library (checked byte for byte), namedtuple and dataclasses
+    building methods, and the check's own expressions for the current request.
+    Everything else raises PermissionError where it happens, so the code never runs,
+    and is recorded for the worker to report.
+
+    The red-team found a port could load the original from a path in its environment
+    and answer with the original's results, or embed the original's source and run it.
+    This, with the port's worker running where the original isn't, closes both.
+
+    Returns ``(allow, violations)``: ``allow(sources)`` sets the expressions the next
+    request may compile, ``violations()`` returns what was refused so far.
+    """
+    import sysconfig
+
+    roots = []
+    for path in (site, sysconfig.get_paths()["stdlib"], sysconfig.get_paths()["platstdlib"], os.path.dirname(os.path.abspath(__file__))):
+        real = os.path.realpath(path)
+        if real not in roots:
+            roots.append(real)
+    stdlib = os.path.realpath(sysconfig.get_paths()["stdlib"])
+    string_compilers = {os.path.join(stdlib, name) for name in _STRING_COMPILERS}
+    state = {"busy": False, "allowed": frozenset()}
+    found = []
+    getframe = sys._getframe
+    realpath, isfile = os.path.realpath, os.path.isfile
+
+    def under_roots(name):
+        if not isinstance(name, str) or not name.startswith("/") or not isfile(name):
+            return False
+        real = realpath(name)
+        return any(real == root or real.startswith(root + os.sep) for root in roots)
+
+    def is_the_file(source, filename):
+        if not under_roots(filename):
+            return False
+        try:
+            with open(filename, "rb") as handle:
+                data = handle.read()
+        except OSError:
+            return False
+        if isinstance(source, str):
+            source = source.encode("utf-8", "surrogatepass")
+        return isinstance(source, (bytes, bytearray, memoryview)) and bytes(source) == data
+
+    def inside_check_code():
+        frame = getframe(2)
+        for _ in range(64):
+            if frame is None:
+                return False
+            if frame.f_code.co_filename == CHECK_CODE:
+                return True
+            frame = frame.f_back
+        return False
+
+    def loading_from_roots():
+        frame = getframe(2)
+        for _ in range(12):
+            if frame is None:
+                return False
+            code = frame.f_code
+            if code.co_filename == "<frozen importlib._bootstrap_external>" and code.co_name == "get_code":
+                local = frame.f_locals
+                return any(under_roots(local.get(key)) for key in ("source_path", "bytecode_path", "path"))
+            frame = frame.f_back
+        return False
+
+    def problem(event, args):
+        if event == "compile":
+            source, filename = args[0], args[1]
+            text = source.decode("utf-8", "surrogatepass") if isinstance(source, bytes) else source
+            if isinstance(text, str) and text in state["allowed"]:
+                return None  # eval reports a string's source as bytes
+            if is_the_file(source, filename):
+                return None
+            if filename == "<string>" and getframe(2).f_code.co_filename in string_compilers:
+                return None
+            if inside_check_code():
+                return None
+            return f"compiles Python source ({filename!r}) that isn't a file of the port or the standard library"
+        if event in ("marshal.loads", "marshal.load"):
+            return None if loading_from_roots() else "unmarshals a code object outside the import system"
+        if event == "import":
+            name = args[0] if args else ""
+            if isinstance(name, str) and name.split(".")[0] in _REFUSED_MODULES:
+                return f"imports {name}, which can rewrite the interpreter's memory"
+            return None
+        if event.startswith("ctypes."):
+            return f"uses ctypes ({event})"
+        return _ALWAYS_REFUSED.get(event)
+
+    watched = {"compile", "marshal.loads", "marshal.load", "import", *_ALWAYS_REFUSED}
+
+    def hook(event, args):
+        if state["busy"] or not (event in watched or event.startswith("ctypes.")):
+            return
+        state["busy"] = True
+        try:
+            refused = problem(event, args)
+        finally:
+            state["busy"] = False
+        if refused:
+            found.append(refused)
+            raise PermissionError(f"portwright: a port's worker {refused}")
+
+    sys.addaudithook(hook)
+
+    def allow(sources):
+        state["allowed"] = frozenset(sources)
+
+    return allow, lambda: list(dict.fromkeys(found))
+
+
 def _limit_memory():
     """Cap this worker's address space, so an input that asks for a huge allocation,
     such as format(1, "2000000000"), raises MemoryError here instead of starving the
@@ -394,6 +559,7 @@ def main() -> int:
     parser.add_argument("--module", required=True)
     parser.add_argument("--path", required=True)
     parser.add_argument("--coverage")
+    parser.add_argument("--guard", action="store_true", help="refuse running Python code a port shouldn't (see install_guard)")
     options = parser.parse_args()
 
     # Keep the real stdout for protocol messages. Anything writing to file
@@ -416,22 +582,29 @@ def main() -> int:
         protocol.write(json.dumps(message) + "\n")
         protocol.flush()
 
+    allow, violations = install_guard(options.path) if options.guard else (None, lambda: [])
     try:
         module = importlib.import_module(options.module)
     except BaseException as exc:
-        reply({"ready": False, "error": _describe_exception(exc)})
+        reply({"ready": False, "error": _describe_exception(exc), "refused": violations()})
         return 1
-    reply({"ready": True, "location": getattr(module, "__file__", None)})
+    reply({"ready": True, "location": getattr(module, "__file__", None), "refused": violations()})
 
     handles = Handles()
     for line in sys.stdin:
         request = json.loads(line)
         if request["op"] == "exit":
             break
+        if allow:
+            allow(_expression_sources(request, set()))
         if request["op"] == "bench":
-            reply(run_benchmark(request, module, handles))
+            outcome = run_benchmark(request, module, handles)
         else:
-            reply(run_request(request, module, handles))
+            outcome = run_request(request, module, handles)
+        refused = violations()
+        # Reported from this loop's own locals, which the port can't reach, and every
+        # time from now on: a refused attempt taints the whole process.
+        reply({"kind": "refused", "refused": refused} if refused else outcome)
     if collector:
         collector.stop()
         collector.save()

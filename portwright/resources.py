@@ -21,6 +21,7 @@ import fcntl
 import json
 import os
 import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -333,3 +334,69 @@ def require_free_space(path: str | Path, what: str) -> None:
 def remove_tree(path: str | Path) -> None:
     """Delete a build folder. Missing folders and files Docker left owned by root are skipped."""
     shutil.rmtree(path, ignore_errors=True)
+
+
+# ---------------------------------------------------------------- gate output
+
+OUTPUT_KEEP_BYTES = 32 * 1024 * 1024
+DISK_CHECK_SECONDS = 5.0
+
+
+def run_bounded(
+    command: list[str], *, timeout: float, container: str | None = None, disk: str | Path | None = None,
+    keep: int = OUTPUT_KEEP_BYTES,
+) -> subprocess.CompletedProcess:
+    """``subprocess.run(command, capture_output=True, text=True, timeout=...)`` for a gate
+    container, without letting it take the host down.
+
+    Each stream keeps only its last ``keep`` bytes: a container that printed 668 MB grew
+    the orchestrator to 2 GB, and enough would have killed it (red-team). With ``disk``,
+    the container named ``container`` is stopped if free space there falls below half
+    the floor while it runs: the floor was only checked before a gate started, so one
+    gate could fill the disk for every other run.
+    """
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    kept = {"out": bytearray(), "err": bytearray()}
+
+    def drain(stream, buffer):
+        for chunk in iter(lambda: stream.read(65536), b""):
+            buffer += chunk
+            if len(buffer) > 2 * keep:
+                del buffer[: len(buffer) - keep]
+    readers = [threading.Thread(target=drain, args=(process.stdout, kept["out"]), daemon=True),
+               threading.Thread(target=drain, args=(process.stderr, kept["err"]), daemon=True)]
+    for reader in readers:
+        reader.start()
+    deadline = time.monotonic() + timeout
+    stopped = None
+    floor = minimum_free_gb() / 2
+    while process.poll() is None:
+        if time.monotonic() > deadline:
+            _stop(process, container)
+            for reader in readers:
+                reader.join(5)
+            raise subprocess.TimeoutExpired(command, timeout, bytes(kept["out"][-keep:]), bytes(kept["err"][-keep:]))
+        if disk is not None and floor > 0 and shutil.disk_usage(_existing(disk)).free / 1024**3 < floor:
+            stopped = f"stopped: free disk space fell below {floor:g} GB while it ran"
+            _stop(process, container)
+            break
+        time.sleep(min(DISK_CHECK_SECONDS, max(0.05, deadline - time.monotonic())))
+    process.wait()
+    for reader in readers:
+        reader.join(5)
+    text = lambda buffer: bytes(buffer[-keep:]).decode("utf-8", "replace")  # noqa: E731
+    stderr = text(kept["err"]) + (f"\n{stopped}\n" if stopped else "")
+    return subprocess.CompletedProcess(command, 125 if stopped else process.returncode, text(kept["out"]), stderr)
+
+
+def _existing(path) -> Path:
+    probe = Path(path).resolve()
+    while not probe.exists() and probe != probe.parent:
+        probe = probe.parent
+    return probe
+
+
+def _stop(process: subprocess.Popen, container: str | None) -> None:
+    if container:
+        subprocess.run(["docker", "kill", container], capture_output=True, check=False)
+    process.kill()

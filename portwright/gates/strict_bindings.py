@@ -56,6 +56,7 @@ _CODEC_METHODS = {"encode", "decode"}
 # PyAnyMethods that always run Python-level behavior, and whose names Rust code doesn't use.
 ALWAYS_DISPATCH = {
     "repr", "str", "call", "call0", "call1", "call_method", "call_method0", "call_method1",
+    "sort", "is_subclass", "is_subclass_of", "from_timestamp",
     "getattr", "getattr_opt", "setattr", "hasattr", "delattr", "compare", "rich_compare",
     "lt", "le", "gt", "ge", "floor_div", "div", "rem", "divmod", "matmul", "lshift", "rshift",
     "bitand", "bitor", "bitxor", "bitnot", "is_truthy", "dir", "py_super", "try_iter", "is_iterable",
@@ -91,6 +92,16 @@ _RAW_ACCESS = [
     (re.compile(r"\b(?:Debug|Display|ToString)\s*::\s*(?:fmt|to_string)\b|\.\s*fmt\s*\("), "calls a formatting trait directly, which for a Python object calls str() or repr()"),
 ]
 _DEBUG_SPEC = re.compile(r"\{[^{}]*:[^{}]*\?\}")
+# Found by the red-team: ways to reach a type's slots or format a Python object
+# that no name above covers.
+_RAW_ACCESS += [
+    (re.compile(r"\bPyTypeObject\s*\{"), "destructures a type object, whose slots point at CPython's code"),
+    (re.compile(r"\btransmute\b"), "transmutes values, which can turn a pointer into a call to CPython's code"),
+    (re.compile(r'\bextern\s*"C"\s*fn\b'), "names a C function type, which can call CPython's code through a pointer"),
+    (re.compile(r"(?:\bimpl|\bdyn|:)\s*(?:std\s*::\s*)?(?:fmt\s*::\s*)?(?:Display|Debug|ToString)\b(?!\s+for\b)"),
+     "accepts anything Display, Debug or ToString, which for a Python object calls str() or repr()"),
+    (re.compile(r"\bPy(?:DateTime|Date|Time|Delta|TzInfo)\s*::"), "builds datetime objects, which runs the datetime module's code"),
+]
 
 
 def _kind(file: RustFile, expression: str, at: int, depth: int = 0) -> str | None:
@@ -348,11 +359,15 @@ def macro_problems(file: RustFile) -> list[tuple[int, str]]:
     return _dispatch_problems(file, spans) if spans else []
 
 
-def feature_problems(spec, features_table: dict) -> list[str]:
-    """PyO3 features off the list, from a dependency spec and a crate's [features] table."""
+def feature_problems(spec, features_table: dict, names: tuple[str, ...] = ("pyo3",)) -> list[str]:
+    """PyO3 features off the list, from a dependency spec and a crate's [features] table.
+
+    ``names`` are what the crate calls PyO3 (a rename such as ``py = { package = "pyo3" }``
+    counts); ``name/feature`` and the weak ``name?/feature`` both enable a feature.
+    """
     features = set(spec.get("features", [])) if isinstance(spec, dict) else set()
     for enabled in features_table.values():
         for item in enabled if isinstance(enabled, list) else []:
-            if isinstance(item, str) and item.startswith("pyo3/"):
+            if isinstance(item, str) and "/" in item and item.split("/", 1)[0].rstrip("?") in names:
                 features.add(item.split("/", 1)[1])
     return sorted(features - ALLOWED_PYO3_FEATURES)

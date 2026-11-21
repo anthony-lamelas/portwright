@@ -289,9 +289,18 @@ STRPTIME = [("2024-02-29", "%Y-%m-%d"), ("2024-02-30", "%Y-%m-%d"), ("24-2-9", "
             ("١٢", "%d"), ("2024-02-29T13:05", "%Y-%m-%dT%H:%M"), ("10000", "%Y"), ("0999", "%Y"), ("999", "%Y")]
 
 
+def _strptime(s, f):
+    import re
+
+    try:
+        return dt_out(dt.datetime.strptime(s, f))
+    except re.error as error:  # the shim's fixed form of it; see test_a_repeated_directive_is_a_fixed_value_error
+        raise ValueError(str(error)) from None
+
+
 def test_strptime():
     for text, fmt in STRPTIME:
-        same(pc.strptime, lambda s, f: dt_out(dt.datetime.strptime(s, f)), text, fmt)
+        same(pc.strptime, _strptime, text, fmt)
 
 
 def test_str_repr_and_zone_names():
@@ -316,3 +325,11 @@ def test_timezone_name_of_none_is_a_fixed_error():
     with pytest.raises(TypeError) as caught:
         pc.timezone_name(None)
     assert str(caught.value) == "timezone_name needs a UTC offset in seconds, not None"
+
+
+def test_a_repeated_directive_is_a_fixed_value_error():
+    """re's own error carried %Z's names in hash-seed order ("utc|gmt" or "gmt|utc")."""
+    with pytest.raises(ValueError) as caught:
+        pc.strptime("", "%Z%Z")
+    assert type(caught.value) is ValueError
+    assert str(caught.value) == "redefinition of group name 'Z' as group 2; was group 1 at position 18"

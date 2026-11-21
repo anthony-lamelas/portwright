@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import random
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,9 @@ from pathlib import Path
 from portwright.gates import GateResult
 from portwright.gates.differential import PYTEST_EXIT_OK, PYTEST_EXIT_TESTS_FAILED, run_checks
 from portwright.toolchain import build_python_package, run_in_toolchain
+
+
+_NEVER_BUILDS = re.compile(r"^PyResult\s*::\s*(?:new|from_iter|from)\s*\(")
 
 
 def list_rust_mutants(workspace, *, target_dir=None) -> list[dict]:
@@ -74,6 +78,11 @@ def mutation_gate(
         shutil.rmtree(copy)
     shutil.copytree(workspace, copy, ignore=shutil.ignore_patterns("target", ".git"))
     mutants = list_rust_mutants(copy, target_dir=target_dir)
+    # cargo-mutants doesn't know PyO3's PyResult is a Result, so it writes PyResult::new(..)
+    # for every binding function, which never compiles. Those took 26 of isodate's 40
+    # sampled mutants (#90), leaving 14 to judge; they're dropped before sampling.
+    never_build = [m for m in mutants if _NEVER_BUILDS.match(m.get("replacement") or "")]
+    mutants = [m for m in mutants if m not in never_build]
     if len(mutants) > sample:
         mutants = random.Random(seed).sample(mutants, sample)
     workers = max(1, min(parallel, len(mutants)))
@@ -89,12 +98,12 @@ def mutation_gate(
         for mutant in mutants[index::workers]:
             diff = mutant["diff"]
             if not _apply(diff, mine, mutant["file"]):
-                results.append(("unviable", None))
+                results.append(("unviable", "the mutant didn't apply"))
                 continue
             try:
                 built = build_python_package(mine, crate, site, target_dir=target)
                 if built.returncode != 0:
-                    results.append(("unviable", None))
+                    results.append(("unviable", "the mutant doesn't build"))
                     continue
                 run = run_checks(
                     checks_dir, reference, {**reference, "path": str(site)},
@@ -114,11 +123,16 @@ def mutation_gate(
                 results.append(("caught", label))
             elif run.exit_status == PYTEST_EXIT_OK:
                 results.append(("missed", label))
+            elif run.exit_status == PYTEST_EXIT_TESTS_FAILED:
+                # Failing without a difference: a check crashed, or only approved differences showed.
+                tail = (run.failures[0]["text"].strip().splitlines() or [""])[-1][:200] if run.failures else ""
+                results.append(("unviable", f"checks failed without an unapproved difference: {tail}"))
             else:
-                results.append(("unviable", None))
+                results.append(("unviable", f"checks didn't run (pytest exit {run.exit_status})"))
         return results
 
     caught, missed, unviable = [], [], 0
+    reasons: dict[str, int] = {}
     with ThreadPoolExecutor(max_workers=workers) as pool:
         for results in pool.map(work, range(workers)):
             for verdict, label in results:
@@ -128,10 +142,13 @@ def mutation_gate(
                     missed.append(label)
                 else:
                     unviable += 1
+                    reasons[label] = reasons.get(label, 0) + 1
     viable = len(caught) + len(missed)
     score = len(caught) / viable if viable else 0.0
     return GateResult(
         "rust_mutation", viable > 0 and score >= minimum,
         f"checks caught {len(caught)}/{viable} Rust mutants ({score:.0%}, minimum {minimum:.0%}); {unviable} not viable",
-        {"score": score, "caught": len(caught), "missed": missed, "not_viable": unviable},
+        # Why mutants couldn't be judged: isodate's runs left most of them unjudged (#90).
+        {"score": score, "caught": len(caught), "missed": missed, "not_viable": unviable, "not_viable_reasons": reasons,
+         "dropped_never_build": len(never_build)},
     )
