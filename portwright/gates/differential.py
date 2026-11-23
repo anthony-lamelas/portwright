@@ -55,6 +55,17 @@ def run_checks(
     candidate = {**candidate, "path": str(Path(candidate["path"]).resolve())}
     for side in (reference, candidate):
         side["python"] = isolation.python(side.get("python", sys.executable))
+    # A built port runs guarded, and contained in its own container (isolation.PortHost),
+    # where the original, the checks and the run's files aren't. A pure-Python candidate,
+    # such as a copy of the original with a planted bug, runs as before.
+    port = None
+    read = [checks_dir, reference["path"], candidate["path"]]
+    if is_built_port(candidate["path"]) and candidate["path"] != reference["path"]:
+        candidate["guard"] = True
+        if isolation.enabled():
+            port = isolation.PortHost(candidate["path"], candidate["module"])
+            candidate["connect"] = isolation.PORT_SOCKET
+            read = [checks_dir, reference["path"]]
     with isolation.scratch("portwright-checks-") as scratch:
         results = Path(scratch) / "results.json"
         config = Path(scratch) / "config.json"
@@ -85,7 +96,7 @@ def run_checks(
         try:
             done = isolation.run(
                 command, cwd=scratch, env=env, timeout=run_timeout,
-                read=[checks_dir, reference["path"], candidate["path"]], write=writable,
+                read=read, write=writable, port=port,
             )
         except subprocess.TimeoutExpired:
             return CheckRun(exit_status=-1, output="check run timed out")
@@ -100,6 +111,11 @@ def run_checks(
             failures=data["failures"],
             output=output,
         )
+
+
+def is_built_port(path: str | Path) -> bool:
+    """Whether a candidate is a compiled port, which runs guarded."""
+    return any(Path(path).rglob("*.so")) or any(Path(path).rglob("*.pyd"))
 
 
 def _reach_problems(stats: dict, api: list[str] | None) -> dict:
@@ -161,9 +177,33 @@ def differential_gate(
     return GateResult("differential", True, summary, details)
 
 
+# Calls the original doesn't finish aren't compared (#25, #28), so a port is free there.
+# Checks that send many of an API's calls there leave it largely unjudged (red-team, #88).
+NOT_COMPARED_SHARE = 0.25
+NOT_COMPARED_FLOOR = 20
+
+
+def _mostly_uncompared(stats: dict) -> dict[str, str]:
+    return {
+        api: f"{counts['not_compared']} of {counts['calls']}"
+        for api, counts in sorted(stats.items())
+        if counts.get("not_compared", 0) >= NOT_COMPARED_FLOOR and counts["not_compared"] > NOT_COMPARED_SHARE * counts["calls"]
+    }
+
+
 def self_comparison_gate(checks_dir, side: dict, *, api=None, seed=0, max_examples=200) -> GateResult:
-    """Compare a library with itself. Any difference means it's nondeterministic or the runner is broken."""
+    """Compare a library with itself. Any difference means it's nondeterministic or the runner is broken.
+
+    Also fails checks that send over a quarter of an API's calls (and at least 20) to
+    inputs where the original times out or crashes, since those calls are never compared.
+    """
     result = differential_gate(
         checks_dir, side, side, api=api, seed=seed, max_examples=max_examples
     )
+    uncompared = _mostly_uncompared(result.details.get("stats", {}))
+    if result.passed and uncompared:
+        listing = ", ".join(f"{api} ({share})" for api, share in uncompared.items())
+        return GateResult("self_comparison", False,
+                          f"the original times out or crashes on too many calls, which can't be compared: {listing}",
+                          {**result.details, "mostly_uncompared": uncompared})
     return GateResult("self_comparison", result.passed, result.summary, result.details)

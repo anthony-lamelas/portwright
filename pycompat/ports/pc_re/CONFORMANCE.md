@@ -18,7 +18,9 @@ This report shows the port matched the original on the inputs tested. It doesn't
 - **`FutureWarning`s** (#84). The parser records CPython's set warnings (`Possible nested set at position N`, and `Possible set difference/intersection/symmetric difference/union at position N`) at the same positions, and the bindings raise them with `PyErr::warn` after each call, before any error. A cached pattern doesn't warn again, as in CPython. Across 20,000 random set patterns, 3,441 of which warn, warnings, results and errors match CPython 3.12.14 exactly.
 - **Re-checked** in the toolchain image (CPython 3.12.14, seed 20261101, 150 examples) against the current shim, with warnings compared: strict integrity passes, all 242 shim tests pass, and benchmarks are within noise of the published build. The differential finds one known difference, which isn't approved:
   - `error(Decimal('1'))`: the message is `"1"` in CPython and `"<Decimal object>"` in the port. The shim exports `re.error` itself, which accepts any object, and only the `decimal` module's own `str()` gives `"1"`. Other foreign objects already differed the same way; the checks only try `Decimal`.
-- The gate table and figures below predate these changes. Fuzzing was re-run for 30 s per target, with no crashes in 7 targets; Rust mutation wasn't re-run.
+- **Rust mutation re-run** with the harness's gate (sample 40, seed 20262101): the checks caught all 37 viable mutants; 3 weren't viable.
+- **Re-checked again with the port's workers in their own container under the audit-hook guard** (harness issues #88): the same single difference, and all 242 shim tests pass.
+- The gate table and figures below predate these changes. Fuzzing was re-run for 30 s per target, with no crashes in 7 targets.
 
 ## Gates
 | Gate | Result | Detail |

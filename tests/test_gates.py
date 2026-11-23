@@ -243,3 +243,19 @@ def test_a_person_can_grant_a_shared_change(tmp_path):
     assert "crates/x/src/error.rs" in decisions and "AttributeError" in decisions
     assert porter.board.tasks()["t"]["status"] == "pending", "a task waiting for this grant is reopened"
     assert porter._shared_change_attempts("t") == 0, "answered requests no longer count toward blocking"
+
+
+def test_checks_whose_calls_the_original_mostly_cant_finish_are_refused(tmp_path):
+    """Calls where the original times out aren't compared, so a port is free there (#88)."""
+    lib = tmp_path / "lib"
+    (lib / "slow").mkdir(parents=True)
+    (lib / "slow" / "__init__.py").write_text("import os\ndef f(x):\n    if x % 2 == 0:\n        os._exit(3)  # the original crashes, so nothing is compared\n    return x\n")
+    checks = tmp_path / "checks"
+    checks.mkdir()
+    (checks / "test_slow.py").write_text(
+        "from hypothesis import given, strategies as st\nfrom portwright.compare import same\n\n"
+        "@given(st.integers(-1, 1000))\ndef test_f(x):\n    same('f', x)\n"
+    )
+    side = {"path": str(lib), "module": "slow", "python": sys.executable}
+    result = self_comparison_gate(checks, side, max_examples=80)
+    assert not result.passed and "times out or crashes on too many calls" in result.summary, result.summary

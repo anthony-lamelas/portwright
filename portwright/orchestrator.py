@@ -24,7 +24,7 @@ from portwright.gates.integrity import hash_tree
 from portwright.gates.license import is_permissive, license_files
 from portwright.gates.mutation import mutation_gate
 from portwright.gates.rust_quality import count_rust_lines, count_rust_lines_file
-from portwright.gates.upstream_tests import strip_holdouts, upstream_gate
+from portwright.gates.upstream_tests import absolutize_package_imports, strip_holdouts, upstream_gate
 from portwright.intake import write_build_time_files
 from portwright.manifest import extract_api
 from portwright.report import write_report
@@ -47,6 +47,12 @@ def _ranges(lines: list[int]) -> str:
             spans.append([line, line])
     text = ", ".join(f"{a}-{b}" if a != b else f"{a}" for a, b in spans[:20])
     return text + (", ..." if len(spans) > 20 else "")
+
+
+def _tests_inside(package: Path, tests: Path) -> set[Path]:
+    """The tests path, if it sits inside the package folder, so intake leaves it out."""
+    tests = tests.resolve()
+    return {tests} if tests != package.resolve() and tests.is_relative_to(package.resolve()) else set()
 
 
 class RunStopped(RuntimeError):
@@ -363,7 +369,11 @@ class Porter:
         destination = self.paths.upstream_src / Path(config.package_path).name
         destination.parent.mkdir(parents=True, exist_ok=True)
         if package.is_dir():
-            shutil.copytree(package, destination)
+            # Tests kept inside the package (pytimeparse/tests) would otherwise reach agents
+            # through the copy of the source, held-back tests included.
+            inside = _tests_inside(package, tests)
+            shutil.copytree(package, destination, ignore=lambda folder, names: [
+                name for name in names if (Path(folder) / name).resolve() in inside])
             # Files the build writes, such as setuptools-scm's version.py, aren't in the clone (open item S).
             generated = write_build_time_files(source, config.package_path, destination)
             if generated:
@@ -377,6 +387,11 @@ class Porter:
             shutil.copyfile(tests, self.paths.tests_full / tests.name)
         else:
             shutil.copytree(tests, self.paths.tests_full)
+            if package.is_dir() and _tests_inside(package, tests):
+                location = [Path(config.package_path).name, *tests.resolve().relative_to(package.resolve()).parts]
+                rewritten = absolutize_package_imports(self.paths.tests_full, location)
+                if rewritten:
+                    self._log(f"  tests live inside the package; made relative imports absolute in {', '.join(rewritten)}")
         holdouts = strip_holdouts(self.paths.tests_full, self.paths.tests_visible, seed=config.seed, fraction=config.holdout_fraction)
         atomic_write(self.paths.control / "holdout_tests.json", json.dumps(holdouts, indent=1))
         api = extract_api(destination if package.is_dir() else self.paths.upstream_src)

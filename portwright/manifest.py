@@ -82,4 +82,29 @@ def extract_api(package_dir: str | Path) -> list[str]:
                 if node.name in exported or _is_public(node.name):
                     found.update(place(member) for member in _class_members(node))
         found.update(place(name) for name in exported)
+    found.update(_renamed_at_root(package_dir, found))
     return sorted(found)
+
+
+def _renamed_at_root(package_dir: Path, found: set[str]) -> set[str]:
+    """Public names the root re-exports under another name, as callers reach them.
+
+    pytimeparse's root does ``from .timeparse import timeparse as parse``. Callers use
+    ``pytimeparse.parse``, but only ``timeparse.timeparse`` was listed, so the name
+    they use was never required of a port or of the checks.
+    """
+    init = package_dir / "__init__.py"
+    if not init.exists():
+        return set()
+    added = set()
+    for node in ast.parse(init.read_text(encoding="utf-8")).body:
+        if not (isinstance(node, ast.ImportFrom) and node.level == 1 and node.module):
+            continue
+        for alias in node.names:
+            if not alias.asname or alias.asname == alias.name or not _is_public(alias.asname):
+                continue
+            source = f"{node.module}.{alias.name}"
+            for name in found:
+                if name == source or name.startswith(source + "."):
+                    added.add(alias.asname + name[len(source):])
+    return added

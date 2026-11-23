@@ -40,6 +40,10 @@ def pytest_sessionfinish(session, exitstatus):
         return
     if hasattr(session.config, "workerinput"):  # an xdist worker; the controller cleans up
         return
+    if session.config.option.collectonly or not session.testscollected:
+        # A `--collect-only` run built nothing, and deleting here would pull the folders
+        # out from under a suite running alongside it.
+        return
     for name in SCRATCH:
         path = REPO / "target" / name
         if path == Path(session.config.option.basetemp or "/nonexistent"):

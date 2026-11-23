@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 import os
 import re
 import tomllib
@@ -32,6 +33,23 @@ _EXEC_PATTERNS = {
     "embeds Python source": re.compile(r'include_(?:str|bytes)!\s*\(\s*"[^"]*\.py"'),
     "imports through the C API": re.compile(r"\bPyImport_\w+"),
 }
+# In every crate that can reach PyO3, strict or not. Each was a red-team way to run
+# Python source or import a module that the narrower patterns above missed.
+_PYTHON_LAYER_PATTERNS = {
+    # PyO3's run and eval take the code first, as a C string; pc_re's Match::run doesn't.
+    "runs Python source": re.compile(
+        r"\bPython\s*>?\s*::\s*(?:run|eval)(?:_bound)?\b"
+        r"|\.\s*(?:run|eval)(?:_bound)?\s*\(\s*&?\s*(?:[bc]?r?#*\"|[\w:]*\bC(?:Str|String)\b|c_str!)"),
+    "runs or imports Python through a PyO3 helper": re.compile(
+        r"\b(?:py_run\w*|import_exception\w*|ImportedExceptionTypeObject|PyCode|PyCodeInput)\b|\bimpl_\s*::"),
+    "names an import function without calling it, so what it imports can't be checked": re.compile(
+        r"(?:\.|::)\s*import(?:_bound)?\b(?!\s*(?:::\s*<[^()]*>\s*)?\()"),
+    "calls a method or macro named by a macro argument, which can't be checked": re.compile(
+        r"\.\s*\$\w+|\$\w+\s*!|\b(?:Py\w*|pyo3|Python|Bound|Borrowed|ffi)\s*::\s*\$\w+"),
+}
+# Strings that name a way to run code, compared after unescaping ("__im\x70ort__").
+_DYNAMIC_NAMES = {"exec", "eval", "compile", "__import__", "importlib", "runpy", "__builtins__", "code", "marshal", "ctypes"}
+_STRING = re.compile(r'(?<![\w"])(?:[bc]?r(#*)"[\s\S]*?"\1|[bc]?"(?:[^"\\]|\\[\s\S])*")')
 _DEPENDENCY_SECTIONS = ("dependencies", "dev-dependencies", "build-dependencies")
 # Build output, skipped only at the top of the workspace: anywhere else, a folder named
 # target is the port's own code (maturin will pack one into the wheel if told to).
@@ -49,8 +67,17 @@ def hash_tree(path: str | Path) -> dict[str, str]:
     path = Path(path)
     hashes = {}
     for item in sorted(path.rglob("*")):
-        if item.is_file() and not {"__pycache__", ".hypothesis", ".pytest_cache"} & set(item.parts):
+        if {"__pycache__", ".hypothesis", ".pytest_cache"} & set(item.parts):
+            continue
+        # Never follow a link or read a pipe or device: a FIFO named like a source file
+        # hung the gate, and a link pointed it at files outside the port (red-team).
+        mode = item.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            hashes[str(item.relative_to(path))] = "link:" + os.readlink(item)
+        elif stat.S_ISREG(mode):
             hashes[str(item.relative_to(path))] = hashlib.sha256(item.read_bytes()).hexdigest()
+        elif not stat.S_ISDIR(mode):
+            hashes[str(item.relative_to(path))] = "special"
     return hashes
 
 
@@ -61,7 +88,8 @@ def changed_files(expected: dict[str, str], current: dict[str, str]) -> list[str
 
 
 def _walk(workspace: Path):
-    """Every file the port owns: all of the workspace but .git and the top-level target/."""
+    """Every regular file the port owns: all of the workspace but .git and the top-level
+    target/. Links and special files are never read (see ``_unreadable``)."""
     for root, folders, files in os.walk(workspace):
         here = Path(root)
         folders[:] = [
@@ -69,7 +97,22 @@ def _walk(workspace: Path):
             if name not in _SKIP and not (here == workspace and name in _TOP_LEVEL_SKIP)
         ]
         for name in files:
-            yield here / name
+            if stat.S_ISREG((here / name).lstat().st_mode):
+                yield here / name
+
+
+def _unreadable(workspace: Path) -> list[str]:
+    """Links and pipes, sockets or devices in the port. A FIFO named ``pipe.rs`` hung
+    the host-side gate forever, and a link to a file outside the port crashed it."""
+    found = []
+    for root, folders, files in os.walk(workspace):
+        here = Path(root)
+        folders[:] = [name for name in folders if name not in _SKIP and not (here == workspace and name in _TOP_LEVEL_SKIP)]
+        for name in [*files, *folders]:
+            mode = (here / name).lstat().st_mode
+            if stat.S_ISLNK(mode) or not (stat.S_ISREG(mode) or stat.S_ISDIR(mode)):
+                found.append(f"{(here / name).relative_to(workspace)}: links and special files aren't allowed in a port")
+    return found
 
 
 def _files(workspace: Path, suffix: str):
@@ -126,11 +169,16 @@ class _Crate:
         self.name = manifest.get("package", {}).get("name")
         self.pyo3_specs = []
         self.path_deps: set[Path] = set()
+        self.pyo3_names: set[str] = set()
         for name, spec in _dependency_entries(manifest):
             inherited = isinstance(spec, dict) and spec.get("workspace")
             resolved = workspace_deps.get(name, spec) if inherited else spec
+            if inherited and isinstance(resolved, dict):
+                # A crate adds features to what it inherits; dropping them hid rust_decimal.
+                resolved = {**resolved, "features": [*resolved.get("features", []), *spec.get("features", [])]}
             if _package(name, spec, workspace_deps) in ("pyo3", "pyo3-ffi"):
                 self.pyo3_specs.append(resolved)
+                self.pyo3_names.add(name)
             if isinstance(resolved, dict) and "path" in resolved:
                 self.path_deps.add(((root if inherited else path.parent) / resolved["path"]).resolve())
         # Source folders: the crate's own, and any a [lib] or [[bin]] path points elsewhere.
@@ -200,6 +248,8 @@ def _include_targets(workspace: Path, path: Path, file: RustFile, problems: list
     """Files a #[path] attribute or include! pulls in, which may lie outside any crate."""
     relative = path.relative_to(workspace)
     found = []
+    for match in re.finditer(r"#\s*\[\s*cfg_attr\s*\([^\]]*\bpath\s*=", file.code):
+        problems.append(f"{relative}:{file.line(match.start())}: chooses a module's file through cfg_attr, which can't be checked: {file.snippet(match.start())}")
     for match in re.finditer(r"#\s*\[\s*path\s*=\s*|\binclude\s*!\s*\(", file.code):
         if match.group().startswith("#"):
             value_text = file.src[match.end():file.code.find("]", match.end())]
@@ -216,6 +266,8 @@ def _include_targets(workspace: Path, path: Path, file: RustFile, problems: list
             problems.append(f"{relative}:{line}: includes {value}, which is outside the port")
         elif _within(target, workspace / "target"):
             problems.append(f"{relative}:{line}: includes {value}, which is build output")
+        elif ".git" in target.relative_to(workspace).parts or (_is_fuzz(target.relative_to(workspace)) and not _is_fuzz(relative)):
+            problems.append(f"{relative}:{line}: includes {value}, from a folder the scan skips")
         elif target.is_file():
             found.append(target)
         # Inside an inline module of a non-mod.rs file, #[path] starts from a folder named after the file.
@@ -257,6 +309,19 @@ def _import_problems(relative: Path, file: RustFile, module: str, strict: bool) 
     return problems
 
 
+def _python_layer_problems(relative: Path, file: RustFile) -> list[str]:
+    """Red-team holes in every crate that can reach PyO3, strict bindings or not."""
+    problems = []
+    for label, pattern in _PYTHON_LAYER_PATTERNS.items():
+        for match in pattern.finditer(file.code):
+            problems.append(f"{relative}:{file.line(match.start())}: {label}: {file.snippet(match.start())}")
+    for match in _STRING.finditer(file.src):
+        value = literal(match.group())
+        if value is not None and value.strip() in _DYNAMIC_NAMES:
+            problems.append(f"{relative}:{file.line(match.start())}: names {value.strip()!r}, a way to run Python code: {file.snippet(match.start())}")
+    return problems
+
+
 def _strict_message(relative: Path, file: RustFile, offset: int, reason: str) -> str:
     return (
         f"{relative}:{file.line(offset)}: the bindings may only convert values and raise exceptions; "
@@ -287,6 +352,7 @@ def integrity_gate(
     problems: list[str] = []
     allowed_crates = APPROVED_CRATES | (approved_crates or set())
 
+    problems += _unreadable(workspace)
     for path in _files(workspace, ".py"):
         problems.append(f"{path.relative_to(workspace)}: Python source isn't allowed in a port")
     for path in _walk(workspace):
@@ -347,11 +413,16 @@ def integrity_gate(
         for directory in sorted(python_crates):
             crate = crates[directory]
             for spec in crate.pyo3_specs:
-                for feature in feature_problems(spec, crate.manifest.get("features", {})):
+                for feature in feature_problems(spec, crate.manifest.get("features", {}), tuple(crate.pyo3_names)):
                     problems.append(f"{crate.relative}: PyO3 feature {feature} converts values by running Python code, which strict bindings don't allow")
-        for crate in crates.values():
-            if crate.manifest.get("lib", {}).get("proc-macro") or crate.manifest.get("lib", {}).get("proc_macro"):
-                problems.append(f"{crate.relative}: procedural macros generate code the strict check can't see")
+    for crate in crates.values():
+        # In every mode: a procedural macro can emit an import of the original that no scan sees.
+        if crate.manifest.get("lib", {}).get("proc-macro") or crate.manifest.get("lib", {}).get("proc_macro"):
+            problems.append(f"{crate.relative}: procedural macros generate code the scan can't see")
+        for dependency in sorted(crate.path_deps):
+            if dependency not in crates:
+                where = dependency.relative_to(root) if _within(dependency, root) else dependency
+                problems.append(f"{crate.relative}: depends on the crate at {where}, which the scan doesn't cover (inside .git, fuzz/, target/ or outside the port)")
     # Crates the bindings depend on: their macros expand inside the bindings.
     macro_dirs = set()
     for directory in python_crates if strict_bindings else ():
@@ -360,20 +431,27 @@ def integrity_gate(
                 macro_dirs |= crates[dependency].source_dirs
 
     # Every Rust file, plus whatever #[path] and include! pull in from wherever they point.
+    python_dirs = {folder for d in python_crates for folder in crates[d].source_dirs}
     queue = [
         (path.resolve(), any(_within(path.resolve(), d) for d in strict_dirs))
         for path in _files(workspace, ".rs") if not _is_fuzz(path.relative_to(workspace))
     ]
     files: dict[Path, RustFile] = {}
     strict_files: dict[Path, bool] = {}
+    python_files: set[Path] = set()
     while queue:
         path, strict = queue.pop()
+        if any(_within(path, d) for d in python_dirs):
+            python_files.add(path)
         if path in strict_files and (strict_files[path] or not strict):
             continue
         strict_files[path] = strict
         if path not in files:
             files[path] = read_rust(path.read_text(encoding="utf-8", errors="replace"))
-        queue += [(target, strict) for target in _include_targets(root, path, files[path], problems)]
+        targets = _include_targets(root, path, files[path], problems)
+        if path in python_files:
+            python_files.update(targets)
+        queue += [(target, strict) for target in targets]
     for path, strict in sorted(strict_files.items()):
         relative = path.relative_to(root)
         file = files[path]
@@ -382,6 +460,8 @@ def integrity_gate(
         for label, pattern in _EXEC_PATTERNS.items():
             if pattern.search(file.src):
                 problems.append(f"{relative}: {label}")
+        if path in python_files:
+            problems += _python_layer_problems(relative, file)
         if strict:
             for offset, reason in sorted(bindings_problems(file)):
                 problems.append(_strict_message(relative, file, offset, reason))

@@ -19,9 +19,12 @@ This port was built against the shim before its domain checks (#55), and was bro
 - **`strftime`** accepts only the C89 and CPython-documented directives plus `%:z`, without flags or widths; anything else is the shim's fixed `ValueError`. The core's glibc formatter, with `%-d`, `%_H`, `%s` and the rest, stays available to Rust callers as `strftime::format_glibc`.
 - **`fromtimestamp`** past the C library's `gmtime` raises the shim's fixed `OverflowError` instead of glibc's `OSError` text, and **`timezone_name(None)`** the shim's fixed `TypeError` (#79).
 - **`re.error`** from `strptime` (a repeated directive) carries `msg`, `pattern`, `pos`, `lineno` and `colno`, which the comparison started checking with #52.
+- **A repeated directive** (`strptime('', '%Z%Z')`) is the shim's `ValueError`, with `re`'s message and position, in both the shim and the core. `re`'s own error carried `%Z`'s names in frozenset order, which follows the per-process hash seed, so no port could match it (harness issue #88's re-check found it).
 - **Strict bindings** pass. The bindings read sets through the iterator protocol and a foreign type's name through `to_string()`, which the stricter checker from #54 refuses.
 - **Re-checked** in the toolchain image (CPython 3.12.14, seed 20261101, 150 examples), with warnings compared: no differences across 17,485 calls to 34 APIs, and all 36 shim tests pass. Four benchmarks passed lists, which the shim now refuses, and use `{"__tuple__": [...]}` instead (#87); benchmarks are within noise of the published build.
-- The gate table, planted-bug and mutation figures below are from the original run. Fuzzing was re-run for 30 s per target, with no crashes in 34 targets; Rust mutation wasn't re-run.
+- **Rust mutation re-run** with the harness's gate (sample 40, seed 20262101): the checks caught 24 of 30 viable mutants. Of the six misses, four can't change any output; `checks/test_mutation_gaps.py` catches the other two (ISO times mixing `1230:45` styles, and text after a lone surrogate in `strptime`), confirmed by building each mutant (harness issue #90). With those, 26 of 30.
+- **Re-checked again** with the port's workers in their own container under the guard (#88): no differences across 17,911 calls, and all 37 shim tests pass.
+- The gate table and planted-bug figures below are from the original run. Fuzzing was re-run for 30 s per target, with no crashes in 34 targets.
 
 ## Gates
 | Gate | Result | Detail |

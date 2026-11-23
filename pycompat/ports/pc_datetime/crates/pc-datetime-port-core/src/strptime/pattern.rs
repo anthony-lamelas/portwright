@@ -213,14 +213,17 @@ fn translate(p: &[u32]) -> PyResult<String> {
                         .unwrap_or(p.len());
                     let name = p[name_start..name_end].to_vec();
                     if let Some((_, first)) = names.iter().find(|(n, _)| *n == name) {
-                        return Err(PyError::re_error(
-                            format!(
-                                "redefinition of group name {} as group {groups}; was group {first}",
-                                PyStr::from_code_points(name).repr()
-                            ),
-                            PyStr::from_code_points(p.to_vec()),
-                            name_start,
+                        // The shim raises re's error as a ValueError with the same text:
+                        // the error's pattern lists %Z's names in hash-seed order.
+                        let msg = PyStr::from(format!(
+                            "redefinition of group name {} as group {groups}; was group {first}",
+                            PyStr::from_code_points(name).repr()
                         ));
+                        return Err(PyError::ValueError(PyError::re_text(
+                            &msg,
+                            &PyStr::from_code_points(p.to_vec()),
+                            name_start,
+                        )));
                     }
                     names.push((name, groups));
                     i = copy_until(&mut out, i, cp('>'));
@@ -337,12 +340,12 @@ mod tests {
     }
 
     #[test]
-    fn repeated_group_name_is_re_error() {
+    fn repeated_group_name_is_the_shims_value_error() {
         let cps: Vec<u32> = "(?P<d>1)-(?P<d>2)".chars().map(u32::from).collect();
         let err = translate(&cps).expect_err("duplicate name");
         assert_eq!(
             err.to_string(),
-            "error: redefinition of group name 'd' as group 2; was group 1 at position 13"
+            "ValueError: redefinition of group name 'd' as group 2; was group 1 at position 13"
         );
     }
 }

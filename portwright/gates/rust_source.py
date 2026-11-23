@@ -92,10 +92,14 @@ def read_rust(text: str) -> RustFile:
         code.append(text[i])
         i += 1
     result = RustFile(text, "".join(src), "".join(code))
+    seen: dict[str, str | None] = {}
     for match in re.finditer(r"\b(?:const|static)\s+(\w+)\s*:\s*&\s*(?:'static\s+)?(?:str|CStr)\s*=\s*([^;]+);", result.code):
         value = literal(result.src[match.start(2):match.end(2)])
-        if value is not None:
-            result.consts[match.group(1)] = value
+        name = match.group(1)
+        # Two consts of one name in different modules: the scan can't tell which a use
+        # means, so neither is trusted (red-team: a decoy "builtins" hid "textkit").
+        seen[name] = value if name not in seen or seen[name] == value else None
+    result.consts = {name: value for name, value in seen.items() if value is not None}
     return result
 
 

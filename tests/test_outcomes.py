@@ -173,3 +173,23 @@ def test_floats_round_trip_bit_for_bit():
         back = worker.decode(worker.encode(value), worker.Handles())
         assert struct.pack("<d", back) == struct.pack("<d", value)
     assert worker.encode(float("-nan"))["v"] == "-nan:0xfff8000000000000"
+
+
+def test_an_object_that_copies_the_originals_name_still_differs_by_its_bases():
+    """A red-team port returned an object faking the class name, module and repr (#88)."""
+    from portwright.compare.session import find_difference
+
+    class Real:
+        def __repr__(self):
+            return "<Real>"
+
+    class Fake(dict):
+        def __repr__(self):
+            return "<Real>"
+    Fake.__qualname__ = Real.__qualname__
+    Fake.__module__ = Real.__module__
+    left = worker.canon(Real(), worker.Handles())
+    right = worker.canon(Fake(), worker.Handles())
+    from portwright.compare.session import strip_handles
+
+    assert find_difference(strip_handles(left), strip_handles(right))

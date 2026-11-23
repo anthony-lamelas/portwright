@@ -160,8 +160,8 @@ def run_in_toolchain(
     try:
         # The whole machine's gate containers share one pool (open item V).
         with resources.gate_budget().reserve(resources.megabytes(memory), f"build {name}"):
-            return subprocess.run(
-                [*docker, image, *command], capture_output=True, text=True, timeout=timeout, check=False
+            return resources.run_bounded(
+                [*docker, image, *command], timeout=timeout, container=name, disk=target_dir or workspace,
             )
     except subprocess.TimeoutExpired:
         subprocess.run(["docker", "kill", name], capture_output=True, check=False)

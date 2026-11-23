@@ -50,6 +50,8 @@ Agents run Claude Code in Docker containers:
 
 Integrity gates reject a port that imports the original, edits a check, or changes frozen files.
 
+Gates run agent code in throwaway containers too, and a built port's comparison workers get a container of their own: just the port's package, no original, checks or run files, no network and an empty environment. An audit hook in the worker refuses any Python source the port tries to compile and run. Three red-team agents tried to cheat the gates (#88, #91): a port that borrowed the original's answers passed the old comparison, and 27 of 30 attacks got past the old static scan. Both are fixed, the attacks are kept as tests, and what still gets through is listed under Limits.
+
 ## Results: `parse`
 
 [`parse`](https://github.com/r1chardj0n3s/parse) is about 1,000 lines of Python. It turns `format()`-style patterns into regular expressions, and it depends on the details of Python's `re` and `strptime`. The port contains its own sre-compatible regex engine, so the error messages and positions match CPython's exactly.
@@ -125,13 +127,13 @@ Others have ported `parse` to Rust, and I found them only after this run: [forma
 | Upstream tests, hidden from agents | 278/280 pass |
 | Checks catch planted bugs in the Python | 138/144 (96%) |
 | Checks reach the original's branches | 97.5% |
-| Checks catch Rust mutants | 10/10 (30 not viable) |
+| Checks catch Rust mutants | 10/10 (30 not viable); re-run: 26/33, see below |
 | Checks reach Rust lines | 84.0% |
 | cargo-fuzz | 10 targets, 120s each, no crashes |
 
 Through Python it is 2.1x to 17.7x faster (parsing a `timedelta` duration: 5.7 µs to 0.32 µs). The run cost about $74 of API-equivalent usage, including review rounds that were rejected.
 
-The two hidden tests that fail patch a fixture with `monkeypatch`, so they can't reach a Rust port. The 6 uncaught planted bugs are listed in the report.
+The two hidden tests that fail patch a fixture with `monkeypatch`, so they can't reach a Rust port. The 6 uncaught planted bugs are listed in the report. The run's mutation gate could judge only 10 of its 40 sampled mutants, because cargo-mutants writes `PyResult::new(..)` mutants that never build. With those dropped, a re-run caught 26 of 33 (#90). Five of the seven misses can't change any result isodate returns, and a new checks file catches the other two.
 
 **Rulings by a person.** The run stopped three times because agents asked for something only a person can decide. Each ruling is printed in the report:
 - Submodules such as `isodate.duration` are registered in `sys.modules` by a harness-written file the integrity gate checks byte for byte. The bindings import nothing else from Python.
@@ -202,6 +204,7 @@ git clone https://github.com/r1chardj0n3s/parse target/src/parse
 
 - A pass means **matched on the inputs tried**. Uncaught planted bugs and surviving mutants in the report mark blind spots.
 - **The original library and its tests run on the host, outside Docker.** Only port libraries you trust.
+- **Known holes against a determined cheat** (docs/harness-issues.md AB to AD): under strict bindings, a Python object reaching `str()` through a generic or an untyped variable isn't seen by the source scan; the comparison doesn't look past 40 levels of nesting, 1,000 iterator items or `at 0x` in a repr; one approved difference covers every difference at the same place; and a port can tell when it's being compared.
 - Docker setup:
   - Agent containers run with `--network none` and `--cap-drop ALL`.
   - Snap Docker breaks `no-new-privileges`, so it isn't set.
