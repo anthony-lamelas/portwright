@@ -4,7 +4,10 @@ Subscription mode copies only a short-lived access token into a session. The ref
 token never enters a sandbox, so a container can't outlive its token or affect the
 host's login. Where there's no local login, such as a cloud container, subscription
 mode instead passes the long-lived token from `claude setup-token`, read from
-CLAUDE_CODE_OAUTH_TOKEN. API-key mode passes the key the user set in their environment.
+CLAUDE_CODE_OAUTH_TOKEN, or from PORTWRIGHT_OAUTH_TOKEN where the host hides the first name
+(a Claude Code cloud session can, since that name is its own login). Either way the session
+receives it as CLAUDE_CODE_OAUTH_TOKEN. API-key mode passes the key the user set in their
+environment.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ from pathlib import Path
 
 CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
 OAUTH_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
+# The same setup token under a name a host's own Claude Code won't hide from commands.
+FALLBACK_OAUTH_TOKEN = "PORTWRIGHT_OAUTH_TOKEN"
 # A session shouldn't start with a token that could expire partway through.
 MINIMUM_TOKEN_LIFE_SECONDS = 2 * 60 * 60
 SUBSCRIPTION = "subscription"
@@ -64,7 +69,8 @@ class Auth:
         self.check_environment()
         if self.mode == API_KEY:
             return {"ANTHROPIC_API_KEY": os.environ["ANTHROPIC_API_KEY"]}
-        token = os.environ.get(OAUTH_TOKEN, "").strip()
+        token = (os.environ.get(OAUTH_TOKEN, "").strip()
+                 or os.environ.get(FALLBACK_OAUTH_TOKEN, "").strip())
         if token:
             # A setup-token token can't be refreshed or narrowed, so the session gets
             # it as is, and no credentials file is written.

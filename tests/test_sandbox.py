@@ -91,6 +91,15 @@ def test_setup_token_is_passed_without_a_login_file(tmp_path, monkeypatch):
     assert not (tmp_path / "home/.claude/.credentials.json").exists()
 
 
+def test_setup_token_can_come_from_the_fallback_name(tmp_path, monkeypatch):
+    """A cloud session can hide CLAUDE_CODE_OAUTH_TOKEN, its own login, from commands."""
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.delenv("CLAUDE_CODE_OAUTH_TOKEN", raising=False)
+    monkeypatch.setenv("PORTWRIGHT_OAUTH_TOKEN", " token-example\n")
+    env = Auth(SUBSCRIPTION, tmp_path / "missing.json").prepare_session(tmp_path / "home")
+    assert env == {"CLAUDE_CODE_OAUTH_TOKEN": "token-example"}
+
+
 def test_setup_token_still_refuses_a_stray_api_key(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-real-key")
     monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-example")
