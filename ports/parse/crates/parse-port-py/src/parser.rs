@@ -4,7 +4,8 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, PoisonError, RwLock};
 
 use parse_port_core::convert::{self as core_convert, DateArgs};
 use parse_port_core::format::{
@@ -15,6 +16,7 @@ use parse_port_core::{pyre::unicode15 as pystr, strptime as core_strptime, Error
 use pyo3::exceptions::{
     PyAttributeError, PyKeyError, PyOverflowError, PyRecursionError, PyTypeError,
 };
+use pyo3::intern;
 use pyo3::prelude::*;
 use pyo3::sync::PyOnceLock;
 use pyo3::types::{
@@ -26,6 +28,7 @@ use crate::convert::temporal_to_py;
 use crate::errors::to_pyerr;
 use crate::strptime::result_to_py;
 
+mod constants;
 mod re_match;
 
 use re_match::ReMatch;
@@ -288,15 +291,120 @@ impl ExtraTypes for PyExtra<'_, '_> {
 
 // ---------------------------------------------------------------- Parser
 
-/// `parse.Parser`.
+/// `parse.Parser`. Upstream builds a parser in `__init__`, so subclasses can
+/// override `__init__` and change its arguments first; parse_type's
+/// `cfparse.Parser` does. The built parser therefore lives behind a lock that
+/// `__init__` fills, and stays empty until then.
 #[pyclass(module = "parse", name = "Parser", subclass, frozen, dict)]
 pub struct Parser {
+    state: RwLock<Option<Arc<ParserState>>>,
+    /// Built by `__new__` from arguments `__init__` will receive next; its first
+    /// call keeps that build instead of making the same one again.
+    fresh: AtomicBool,
+}
+
+/// A built parser.
+pub struct ParserState {
     core: Arc<core_format::Parser>,
     format: Py<PyAny>,
     converters: HashMap<String, Py<PyAny>>,
     /// The `extra_types` mapping as given (upstream keeps it for pickling).
     extra_types: Py<PyAny>,
     case_sensitive: bool,
+    /// `extra_types` and `case_sensitive` exactly as passed, if not None.
+    given: (Option<Py<PyAny>>, Option<Py<PyAny>>),
+}
+
+/// `(format, extra_types, case_sensitive)` for `Parser.__init__`.
+type InitArgs<'py> = (
+    Bound<'py, PyAny>,
+    Option<Bound<'py, PyAny>>,
+    Option<Bound<'py, PyAny>>,
+);
+
+/// `args` and `kwargs` bound to `(format, extra_types=None, case_sensitive=None)`,
+/// or `None` when they don't fit (`__init__` then raises upstream's `TypeError`).
+fn init_args<'py>(
+    args: &Bound<'py, PyTuple>,
+    kwargs: Option<&Bound<'py, PyDict>>,
+) -> PyResult<Option<InitArgs<'py>>> {
+    const NAMES: [&str; 3] = ["format", "extra_types", "case_sensitive"];
+    if args.len() > NAMES.len() {
+        return Ok(None);
+    }
+    let mut slots: [Option<Bound<'py, PyAny>>; 3] = [None, None, None];
+    for (slot, arg) in slots.iter_mut().zip(args.iter()) {
+        *slot = Some(arg);
+    }
+    for (key, value) in kwargs.into_iter().flat_map(|kw| kw.iter()) {
+        let Ok(key) = key.cast::<PyString>().map(|k| k.to_string()) else {
+            return Ok(None);
+        };
+        let Some(i) = NAMES.iter().position(|n| *n == key) else {
+            return Ok(None);
+        };
+        let Some(slot) = slots.get_mut(i).filter(|slot| slot.is_none()) else {
+            return Ok(None);
+        };
+        *slot = Some(value);
+    }
+    let [format, extra_types, case_sensitive] = slots;
+    Ok(format.map(|format| (format, extra_types, case_sensitive)))
+}
+
+/// `v` unless it is None: an omitted argument and an explicit None mean the same.
+fn given<'a, 'py>(v: Option<&'a Bound<'py, PyAny>>) -> Option<&'a Bound<'py, PyAny>> {
+    v.filter(|v| !v.is_none())
+}
+
+impl Parser {
+    fn empty() -> Self {
+        Parser {
+            state: RwLock::new(None),
+            fresh: AtomicBool::new(false),
+        }
+    }
+
+    fn from_state(state: Arc<ParserState>) -> Self {
+        Parser {
+            state: RwLock::new(Some(state)),
+            fresh: AtomicBool::new(false),
+        }
+    }
+
+    fn current(&self) -> Option<Arc<ParserState>> {
+        self.state
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
+    /// The built parser, or, when `__init__` never ran, the `AttributeError`
+    /// upstream raises for `attr`, the first attribute its method reads.
+    fn state(slf: &Bound<'_, Parser>, attr: &str) -> PyResult<Arc<ParserState>> {
+        match slf.get().current() {
+            Some(state) => Ok(state),
+            None => Err(PyAttributeError::new_err(format!(
+                "'{}' object has no attribute '{attr}'",
+                type_name(slf.as_any())?
+            ))),
+        }
+    }
+
+    fn set(&self, state: Arc<ParserState>) {
+        *self.state.write().unwrap_or_else(PoisonError::into_inner) = Some(state);
+    }
+
+    /// Whether `cls` uses `Parser`'s own `__init__`.
+    fn own_init(cls: &Bound<'_, PyType>) -> PyResult<bool> {
+        let py = cls.py();
+        let parser = py.get_type::<Parser>();
+        if cls.is(&parser) {
+            return Ok(true);
+        }
+        let own = parser.getattr(intern!(py, "__init__"))?;
+        Ok(cls.getattr(intern!(py, "__init__"))?.is(&own))
+    }
 }
 
 /// `__reduce__` matching what `object.__reduce_ex__` gives upstream's plain
@@ -353,21 +461,22 @@ fn date_args(kw: &DateKw) -> DateArgs {
 /// must hold it. Nothing else can observe the parser object.
 enum Owner<'a, 'py> {
     Obj(&'a Bound<'py, Parser>),
-    Value(Parser),
+    Value(Arc<ParserState>),
 }
 
 impl<'py> Owner<'_, 'py> {
-    fn get(&self) -> &Parser {
+    /// The built parser; `attr` names what upstream would read first.
+    fn get(&self, attr: &str) -> PyResult<Arc<ParserState>> {
         match self {
-            Owner::Obj(p) => p.get(),
-            Owner::Value(p) => p,
+            Owner::Obj(p) => Parser::state(p, attr),
+            Owner::Value(p) => Ok(Arc::clone(p)),
         }
     }
 
     fn into_obj(self, py: Python<'py>) -> PyResult<Bound<'py, Parser>> {
         match self {
             Owner::Obj(p) => Ok(p.clone()),
-            Owner::Value(p) => Bound::new(py, p),
+            Owner::Value(p) => Bound::new(py, Parser::from_state(p)),
         }
     }
 }
@@ -392,13 +501,17 @@ enum Src<'a, 'py> {
     Foreign(&'a Bound<'py, PyAny>),
 }
 
-impl Parser {
+impl ParserState {
     fn build(
         py: Python<'_>,
         format: &Bound<'_, PyAny>,
         extra_types: Option<&Bound<'_, PyAny>>,
         case_sensitive: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Self> {
+        let given_args = (
+            given(extra_types).map(|e| e.clone().unbind()),
+            given(case_sensitive).map(|c| c.clone().unbind()),
+        );
         let extra_obj = match extra_types {
             Some(e) if !e.is_none() => e.clone(),
             _ => PyDict::new(py).into_any(),
@@ -426,13 +539,35 @@ impl Parser {
                     .map_err(|e| e.into_py(py))?,
             )
         };
-        Ok(Parser {
+        Ok(ParserState {
             core,
             format: format.clone().unbind(),
             converters: extra.converters,
             extra_types: extra_obj.clone().unbind(),
             case_sensitive,
+            given: given_args,
         })
+    }
+
+    /// Whether this parser was built from exactly these arguments (the same
+    /// objects), so building again would give the same parser.
+    fn built_from(
+        &self,
+        format: &Bound<'_, PyAny>,
+        extra_types: Option<&Bound<'_, PyAny>>,
+        case_sensitive: Option<&Bound<'_, PyAny>>,
+    ) -> bool {
+        let same = |mine: &Option<Py<PyAny>>, theirs: Option<&Bound<'_, PyAny>>| match (
+            mine,
+            given(theirs),
+        ) {
+            (None, None) => true,
+            (Some(m), Some(t)) => t.is(m),
+            _ => false,
+        };
+        format.is(&self.format)
+            && same(&self.given.0, extra_types)
+            && same(&self.given.1, case_sensitive)
     }
 
     fn convert<'py>(
@@ -549,7 +684,7 @@ impl Parser {
         PyTuple::new(py, fixed)
     }
 
-    /// [`Parser::fixed_list`] for our own match when every index is a
+    /// [`ParserState::fixed_list`] for our own match when every index is a
     /// distinct in-range group: each list slot is read (and converted) at
     /// most once, so only those groups need to become Python strings.
     fn fixed_own<'py>(
@@ -759,7 +894,9 @@ impl Parser {
         evaluate_result: bool,
     ) -> PyResult<Py<PyAny>> {
         if evaluate_result {
-            let r = owner.get().evaluate_src(py, &Src::Own(&m))?;
+            let r = owner
+                .get("_fixed_fields")?
+                .evaluate_src(py, &Src::Own(&m))?;
             Ok(Bound::new(py, r)?.into_any().unbind())
         } else {
             let mm = ParseMatch {
@@ -779,7 +916,7 @@ impl Parser {
         frames: usize,
     ) -> PyResult<Py<PyAny>> {
         let regex = owner
-            .get()
+            .get("_Parser__match_re")?
             .core
             .match_regex_nested(|| nesting_limit(py, frames))
             .pyr(py)?;
@@ -796,7 +933,7 @@ impl Parser {
             pos,
             endpos,
         };
-        Parser::wrap_match(py, owner, m, truthy(evaluate_result)?)
+        ParserState::wrap_match(py, owner, m, truthy(evaluate_result)?)
     }
 
     /// `Parser.search`, reached through `frames` upstream Python frames.
@@ -819,11 +956,11 @@ impl Parser {
         };
         let text = || text_of(string);
         match owner
-            .get()
+            .get("_Parser__search_re")?
             .run_search(py, string, &pos, &endpos, text, frames)?
         {
             None => Ok(py.None()),
-            Some(m) => Parser::wrap_match(py, owner, m, truthy(evaluate_result)?),
+            Some(m) => ParserState::wrap_match(py, owner, m, truthy(evaluate_result)?),
         }
     }
 
@@ -883,28 +1020,93 @@ fn expand_named_fields<'py>(
 
 #[pymethods]
 impl Parser {
+    /// Builds the parser when the class keeps `Parser`'s own `__init__`, so
+    /// `Parser(...)` builds once and pickling's `cls.__new__(cls, *args)` still
+    /// works. A subclass with its own `__init__` gets an empty parser, which
+    /// its call to `Parser.__init__` fills.
     #[new]
-    #[pyo3(signature = (format, extra_types = None, case_sensitive = None))]
+    #[classmethod]
+    #[pyo3(signature = (*args, **kwargs))]
     fn new(
+        cls: &Bound<'_, PyType>,
+        args: &Bound<'_, PyTuple>,
+        kwargs: Option<&Bound<'_, PyDict>>,
+    ) -> PyResult<Self> {
+        if !Parser::own_init(cls)? {
+            return Ok(Parser::empty());
+        }
+        let Some((format, extra_types, case_sensitive)) = init_args(args, kwargs)? else {
+            return Ok(Parser::empty());
+        };
+        let state = ParserState::build(
+            cls.py(),
+            &format,
+            extra_types.as_ref(),
+            case_sensitive.as_ref(),
+        )?;
+        let parser = Parser::from_state(Arc::new(state));
+        parser.fresh.store(true, Ordering::Relaxed);
+        Ok(parser)
+    }
+
+    #[pyo3(signature = (format, extra_types = None, case_sensitive = None))]
+    fn __init__(
+        &self,
         py: Python<'_>,
         format: &Bound<'_, PyAny>,
         extra_types: Option<&Bound<'_, PyAny>>,
         case_sensitive: Option<&Bound<'_, PyAny>>,
-    ) -> PyResult<Self> {
-        Parser::build(py, format, extra_types, case_sensitive)
+    ) -> PyResult<()> {
+        if self.fresh.swap(false, Ordering::Relaxed) {
+            if let Some(state) = self.current() {
+                if state.built_from(format, extra_types, case_sensitive) {
+                    return Ok(());
+                }
+            }
+        }
+        let state = ParserState::build(py, format, extra_types, case_sensitive)?;
+        self.set(Arc::new(state));
+        Ok(())
     }
 
     fn __reduce__<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyTuple>> {
         let py = slf.py();
-        let p = slf.get();
-        newobj_reduce(
-            slf.as_any(),
-            vec![
-                p.format.bind(py).clone(),
-                p.extra_types.bind(py).clone(),
-                PyBool::new(py, p.case_sensitive).to_owned().into_any(),
-            ],
-        )
+        let p = Parser::state(slf, "_format")?;
+        let args = vec![
+            p.format.bind(py).clone(),
+            p.extra_types.bind(py).clone(),
+            PyBool::new(py, p.case_sensitive).to_owned().into_any(),
+        ];
+        let cls = slf.get_type();
+        if Parser::own_init(&cls)? {
+            return newobj_reduce(slf.as_any(), args);
+        }
+        // `__new__` alone leaves this subclass empty, so rebuild from the
+        // arguments (upstream restores them from the instance `__dict__`).
+        let restore = py.get_type::<Parser>().getattr(intern!(py, "_restore"))?;
+        let mut all = vec![cls.into_any()];
+        all.extend(args);
+        let state = match slf.getattr("__dict__") {
+            Ok(d) if d.is_truthy()? => d,
+            _ => py.None().into_bound(py),
+        };
+        PyTuple::new(py, [restore, PyTuple::new(py, all)?.into_any(), state])
+    }
+
+    /// Unpickles a subclass with its own `__init__` (see `__reduce__`).
+    #[classmethod]
+    fn _restore<'py>(
+        _parser: &Bound<'py, PyType>,
+        cls: &Bound<'py, PyType>,
+        format: &Bound<'py, PyAny>,
+        extra_types: &Bound<'py, PyAny>,
+        case_sensitive: &Bound<'py, PyAny>,
+    ) -> PyResult<Bound<'py, PyAny>> {
+        let py = cls.py();
+        let obj = cls.call_method1(intern!(py, "__new__"), (cls,))?;
+        let state = ParserState::build(py, format, Some(extra_types), Some(case_sensitive))?;
+        obj.cast::<Parser>()?.get().set(Arc::new(state));
+        Ok(obj)
     }
 
     fn __repr__(slf: &Bound<'_, Self>) -> PyResult<String> {
@@ -912,7 +1114,8 @@ impl Parser {
         // surrogates (and str subclasses) exact.
         let py = slf.py();
         let name = slf.get_type().name()?.to_string();
-        let f = slf.get().format.bind(py);
+        let state = Parser::state(slf, "_format")?;
+        let f = state.format.bind(py);
         let shown = if f.len()? > 20 {
             f.get_item(PySlice::new(py, 0, 17, 1))?.add("...")?
         } else {
@@ -922,8 +1125,9 @@ impl Parser {
     }
 
     #[getter]
-    fn named_fields<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyList>> {
-        let names = self
+    fn named_fields<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyList>> {
+        let py = slf.py();
+        let names = Parser::state(slf, "_named_fields")?
             .core
             .named_fields()
             .iter()
@@ -933,18 +1137,24 @@ impl Parser {
     }
 
     #[getter]
-    fn fixed_fields(&self) -> Vec<i64> {
-        self.core.fixed_fields().to_vec()
+    fn fixed_fields(slf: &Bound<'_, Self>) -> PyResult<Vec<i64>> {
+        Ok(Parser::state(slf, "_fixed_fields")?
+            .core
+            .fixed_fields()
+            .to_vec())
     }
 
     #[getter]
-    fn format(&self, py: Python<'_>) -> Py<PyAny> {
-        self.format.clone_ref(py)
+    fn format(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
+        Ok(Parser::state(slf, "_format")?.format.clone_ref(slf.py()))
     }
 
     #[getter]
-    fn _expression<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyString>> {
-        py_text(py, self.core.expression())
+    fn _expression<'py>(slf: &Bound<'py, Self>) -> PyResult<Bound<'py, PyString>> {
+        py_text(
+            slf.py(),
+            Parser::state(slf, "_expression")?.core.expression(),
+        )
     }
 
     #[pyo3(signature = (string, evaluate_result = None))]
@@ -953,7 +1163,7 @@ impl Parser {
         string: &Bound<'_, PyAny>,
         evaluate_result: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        Parser::parse_from(
+        ParserState::parse_from(
             slf.py(),
             Owner::Obj(slf),
             string,
@@ -970,7 +1180,7 @@ impl Parser {
         endpos: Option<&Bound<'_, PyAny>>,
         evaluate_result: Option<&Bound<'_, PyAny>>,
     ) -> PyResult<Py<PyAny>> {
-        Parser::search_from(
+        ParserState::search_from(
             slf.py(),
             Owner::Obj(slf),
             string,
@@ -1012,8 +1222,8 @@ impl Parser {
         })
     }
 
-    fn evaluate_result(&self, py: Python<'_>, m: &Bound<'_, PyAny>) -> PyResult<ParseResult> {
-        self.evaluate(py, m)
+    fn evaluate_result(slf: &Bound<'_, Self>, m: &Bound<'_, PyAny>) -> PyResult<ParseResult> {
+        Parser::state(slf, "_fixed_fields")?.evaluate(slf.py(), m)
     }
 }
 
@@ -1257,16 +1467,21 @@ impl ResultIterator {
             slf.borrow_mut().text = Some((string.clone().unbind(), Arc::clone(&text)));
             Ok(text)
         };
-        let Some(m) = p
-            .get()
-            .run_search(py, &string, &pos, &endpos, text, METHOD_FRAMES)?
+        let Some(m) = Parser::state(p, "_Parser__search_re")?.run_search(
+            py,
+            &string,
+            &pos,
+            &endpos,
+            text,
+            METHOD_FRAMES,
+        )?
         else {
             return Ok(None);
         };
         let end = m.span_of(0).1;
         slf.borrow_mut().pos = end.into_pyobject(py)?.into_any().unbind();
         let ev = slf.borrow().evaluate_result.clone_ref(py);
-        Parser::wrap_match(py, Owner::Obj(p), m, ev.bind(py).is_truthy()?).map(Some)
+        ParserState::wrap_match(py, Owner::Obj(p), m, ev.bind(py).is_truthy()?).map(Some)
     }
 
     fn next(slf: &Bound<'_, Self>) -> PyResult<Py<PyAny>> {
@@ -1290,8 +1505,8 @@ fn parse<'py>(
     evaluate_result: Option<&Bound<'py, PyAny>>,
     case_sensitive: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let p = Parser::build(py, format, extra_types, case_sensitive)?;
-    Parser::parse_from(
+    let p = Arc::new(ParserState::build(py, format, extra_types, case_sensitive)?);
+    ParserState::parse_from(
         py,
         Owner::Value(p),
         string,
@@ -1314,8 +1529,8 @@ fn search<'py>(
     evaluate_result: Option<&Bound<'py, PyAny>>,
     case_sensitive: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<Py<PyAny>> {
-    let p = Parser::build(py, format, extra_types, case_sensitive)?;
-    Parser::search_from(
+    let p = Arc::new(ParserState::build(py, format, extra_types, case_sensitive)?);
+    ParserState::search_from(
         py,
         Owner::Value(p),
         string,
@@ -1340,7 +1555,8 @@ fn findall<'py>(
     evaluate_result: Option<&Bound<'py, PyAny>>,
     case_sensitive: Option<&Bound<'py, PyAny>>,
 ) -> PyResult<ResultIterator> {
-    let p = Bound::new(py, Parser::build(py, format, extra_types, case_sensitive)?)?;
+    let state = ParserState::build(py, format, extra_types, case_sensitive)?;
+    let p = Bound::new(py, Parser::from_state(Arc::new(state)))?;
     Parser::findall(&p, string, pos, endpos, None, evaluate_result)
 }
 
@@ -1353,7 +1569,8 @@ fn compile(
     extra_types: Option<&Bound<'_, PyAny>>,
     case_sensitive: Option<&Bound<'_, PyAny>>,
 ) -> PyResult<Parser> {
-    Parser::build(py, format, extra_types, case_sensitive)
+    let state = ParserState::build(py, format, extra_types, case_sensitive)?;
+    Ok(Parser::from_state(Arc::new(state)))
 }
 
 /// `parse.extract_format(format, extra_types)`: returns upstream's `locals()`.
@@ -1447,5 +1664,6 @@ pub fn register(m: &Bound<'_, PyModule>) -> PyResult<()> {
         table.set_item(k, v)?;
     }
     m.add("dt_format_to_regex", table)?;
+    constants::register(m)?;
     Ok(())
 }

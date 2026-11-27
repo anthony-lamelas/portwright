@@ -263,6 +263,22 @@ fn parse_re_at(c: &[char], i: usize) -> Option<usize> {
     (at(j) == Some('}')).then_some(j + 1 - i)
 }
 
+/// Spans of `PARSE_RE.finditer(text)`: non-overlapping matches, left to right.
+pub fn parse_re_spans(c: &[char]) -> Vec<(usize, usize)> {
+    let mut spans = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        match parse_re_at(c, i) {
+            Some(n) => {
+                spans.push((i, i + n));
+                i += n;
+            }
+            None => i += 1,
+        }
+    }
+    spans
+}
+
 fn split_format(c: &[char]) -> Vec<Part<'_>> {
     let mut parts = Vec::new();
     let mut text_start = 0;
@@ -781,6 +797,27 @@ mod tests {
     fn expr(f: &str) -> Result<String> {
         let mut x: IndexMap<String, ExtraType> = IndexMap::new();
         Ok(Parser::new(f, &mut x, false)?.expression().to_owned())
+    }
+
+    /// The `(start, end)` spans `PARSE_RE.finditer(text)` gives in CPython.
+    fn spans(text: &str) -> Vec<(usize, usize)> {
+        parse_re_spans(&text.chars().collect::<Vec<_>>())
+    }
+
+    #[test]
+    fn parse_re_spans_match_cpython() {
+        assert_eq!(spans(""), vec![]);
+        assert_eq!(
+            spans("x{a}y{{z}}{b:d}w"),
+            vec![(1, 4), (5, 7), (8, 10), (10, 15)]
+        );
+        assert_eq!(spans("{a.b[c]:>10}{"), vec![(0, 12)]);
+        assert_eq!(spans("}{x"), vec![]);
+        assert_eq!(spans("{:}"), vec![]);
+        assert_eq!(spans("{a b}"), vec![]);
+        assert_eq!(spans("é{ñ}{x}"), vec![(1, 4), (4, 7)]);
+        assert_eq!(spans("{[}"), vec![]);
+        assert_eq!(spans("{a:}}"), vec![(3, 5)]);
     }
 
     #[test]

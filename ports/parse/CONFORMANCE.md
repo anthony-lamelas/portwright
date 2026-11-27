@@ -13,6 +13,13 @@ This report shows the port matched the original on the inputs tested. It doesn't
 
 In the toolchain image (CPython 3.12.14, seed 20261101, 150 examples), after the harness started comparing warnings (harness issue #84): no differences across 71,258 calls, and 113 of 115 upstream tests pass (the same two date-mocking tests fail). The code is unchanged.
 
+**Fixed by hand (2026-11-27), for two differences the gates don't look at.** Running real dependents' test suites against the port (`tools/dependents`) found 16 tests that pass with the original and failed with the port, from two causes:
+
+- **Missing module data.** `parse.PARSE_RE` didn't exist, and parse_type splits formats with it. The port now has `PARSE_RE`, plus the other public data upstream defines: `MONTHS_MAP`, `ALLOWED_TYPES`, `ALL_MONTHS_PAT`, `DAYS_PAT`, `MONTHS_PAT`, `TIME_PAT`, `AM_PAT` and `TZ_PAT`. `PARSE_RE` isn't a `re.Pattern`, because a port can't run CPython's `re`. It is a Rust object with the same `pattern`, `flags`, `groups` and `groupindex`, and the `split` and `findall` methods; `match`, `search`, `finditer` and `sub` aren't provided. Upstream's two other compiled regexes, `REGEX_SAFETY` and `dt_format_symbols_re`, and the modules it imports are still absent.
+- **Subclassing `Parser`.** Upstream builds a parser in `__init__`. The port built it in `__new__`, so a subclass that takes another argument or changes the arguments before calling `super().__init__()` failed with a `TypeError`. parse_type's `cfparse.Parser` does both. The port now builds in `__init__` too, still building in `__new__` when the class keeps `Parser`'s own `__init__`. Pickling works for every kind of subclass. Constructing a `Parser` costs about 0.1 µs more: 0.66 µs, against 8.3 µs for the original.
+
+Afterwards, in the toolchain image (seed 20261101, 150 examples), the integrity, Rust quality, license, build, differential (no differences across 70,884 calls) and upstream tests (113 of 115) gates pass. All 16 dependent tests now pass, and none fails that passed with the original. The canary, coverage, fuzz, mutation and benchmark gates were not rerun.
+
 
 ## Gates
 | Gate | Result | Detail |
