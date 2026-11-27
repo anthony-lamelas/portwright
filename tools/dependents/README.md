@@ -24,4 +24,4 @@ Report: [`reports/parse.md`](reports/parse.md). Dependents: **parse_type 0.6.6**
 - The comparison only calls the APIs that intake lists (`__all__` and the classes they return), so no gate compares the module's own public names. A surface check would have caught cause 1 at intake: every non-underscore, non-module attribute of the original must exist in the port, with the same kind of value. It would need an allow-list for imported names like `re` and `datetime`.
 - No gate subclasses a public class. The differential calls `Parser(...)` and its methods directly, and the upstream tests never subclass it. A generic probe would have caught cause 2: for each public class, compare a subclass whose `__init__` takes an extra keyword argument, and one that changes the arguments before calling `super().__init__`.
 
-Neither is approved or recorded as a difference; that is for a person to decide.
+**Fixed (2026-11-27).** Both causes are fixed by hand in `ports/parse` (see its `CONFORMANCE.md`), and the main gates pass on the result. A rerun flags nothing: [`reports/parse-after-fix.md`](reports/parse-after-fix.md). The two gate checks above are still not built.
