@@ -1,0 +1,32 @@
+{
+ "lib": "parse",
+ "import_name": "parse",
+ "distribution": "parse",
+ "python": "3.12.14",
+ "port": "ports/parse",
+ "original": {
+  "git": "https://github.com/r1chardj0n3s/parse",
+  "commit": "7f07b64089338ee7b7db85a752eb45c4816c2657"
+ },
+ "dependents": [
+  {
+   "name": "parse_type",
+   "version": "0.6.6",
+   "git": "https://github.com/jenisys/parse_type",
+   "commit": "5c4126ae3973b5c0a4107cd8b29f2b74993be330",
+   "lock": "parse_type.lock",
+   "tests": ["tests"],
+   "test_requirements": ["pytest==9.1.1"],
+   "pytest_args": ["-o", "addopts="]
+  },
+  {
+   "name": "pytest-bdd",
+   "version": "9.0.1",
+   "git": "https://github.com/pytest-dev/pytest-bdd",
+   "commit": "aad3bf4350cd4feb9716ba4e81590459e9e0dbbe",
+   "lock": "pytest-bdd.lock",
+   "tests": ["tests"],
+   "test_requirements": ["pytest==9.1.1"]
+  }
+ ]
+}

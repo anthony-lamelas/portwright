@@ -1,0 +1,8 @@
+# Exact versions for parse_type 0.6.6's tests, without parse (the original or the port is installed separately).
+# Regenerate with: python tools/dependents/run.py --lib parse --lock
+iniconfig==2.3.1
+packaging==26.4
+pluggy==1.7.0
+pygments==2.21.0
+pytest==9.1.1
+six==1.17.0
