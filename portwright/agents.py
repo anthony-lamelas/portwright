@@ -189,8 +189,10 @@ class DockerClaude:
         if self.cargo_cache:
             self.cargo_cache.mkdir(parents=True, exist_ok=True)
             docker += ["-v", f"{self.cargo_cache}:/opt/cargo/registry"]
-        for key, value in env.items():
-            docker += ["-e", f"{key}={value}"]
+        # Names only: docker reads the values from its own environment (see run), so
+        # a token or key never appears in the process list.
+        for key in env:
+            docker += ["-e", key]
         for host_path, container_path in session.mounts.items():
             docker += ["-v", f"{Path(host_path).resolve()}:{container_path}"]
         heartbeat_mount, heartbeat = resources.watchdog_mounts(HEARTBEAT_MOUNT)
@@ -230,6 +232,7 @@ class DockerClaude:
             with self.budget.reserve(resources.megabytes(self.memory), f"{self.run_label} {session.role}", on_wait=self.log):
                 done = subprocess.run(
                     self.command(session, home, env, name), input=encodable(session.prompt),
+                    env={**os.environ, **env},
                     capture_output=True, text=True, timeout=session.timeout, check=False,
                 )
         except subprocess.TimeoutExpired:

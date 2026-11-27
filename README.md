@@ -190,6 +190,7 @@ git clone https://github.com/r1chardj0n3s/parse target/src/parse
 ```
 
 - **Your own API key:** use `--auth api_key` with `ANTHROPIC_API_KEY` set. Subscription mode (the default) is for personal runs on your own account, and it refuses to start if an API key is set.
+- **Subscription without a local login** (a cloud container, say): run `claude setup-token` on your own computer and set the result as `CLAUDE_CODE_OAUTH_TOKEN`. Subscription mode then passes that token to each agent's container instead of copying the access token from `~/.claude/.credentials.json`. Unlike that copy, the token is long-lived and can't be narrowed, so anyone who can read the environment can use your subscription.
 - **Resume:** run the same command again. Runs survive crashes and usage limits; `--wait` waits out limits for up to 72 hours.
 - **Approve:** `portwright.cli approve --run-dir ... "<difference>"` approves a proposed difference, `--crate` adds a crate to the approved list, and `--domain` accepts a shim domain review's findings. Only a person should do any of these.
 - **Cost:** the `parse` run took 31 agent sessions and about $56 of API-equivalent usage, as estimated by Claude Code: porters $12, debuggers $15, performance $18, everything else $11. That total includes debugger sessions whose fixes were rejected because of the harness bugs above. It doesn't include building the harness.

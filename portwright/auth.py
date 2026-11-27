@@ -2,7 +2,9 @@
 
 Subscription mode copies only a short-lived access token into a session. The refresh
 token never enters a sandbox, so a container can't outlive its token or affect the
-host's login. API-key mode passes the key the user set in their environment.
+host's login. Where there's no local login, such as a cloud container, subscription
+mode instead passes the long-lived token from `claude setup-token`, read from
+CLAUDE_CODE_OAUTH_TOKEN. API-key mode passes the key the user set in their environment.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
+OAUTH_TOKEN = "CLAUDE_CODE_OAUTH_TOKEN"
 # A session shouldn't start with a token that could expire partway through.
 MINIMUM_TOKEN_LIFE_SECONDS = 2 * 60 * 60
 SUBSCRIPTION = "subscription"
@@ -61,6 +64,11 @@ class Auth:
         self.check_environment()
         if self.mode == API_KEY:
             return {"ANTHROPIC_API_KEY": os.environ["ANTHROPIC_API_KEY"]}
+        token = os.environ.get(OAUTH_TOKEN, "").strip()
+        if token:
+            # A setup-token token can't be refreshed or narrowed, so the session gets
+            # it as is, and no credentials file is written.
+            return {OAUTH_TOKEN: token}
         oauth = self._read_oauth()
         if oauth.get("expiresAt", 0) / 1000 < time.time() + MINIMUM_TOKEN_LIFE_SECONDS:
             self._refresh_on_host()

@@ -83,6 +83,35 @@ def test_session_never_receives_the_refresh_token(tmp_path, monkeypatch):
     assert oct(written.stat().st_mode)[-3:] == "600"
 
 
+def test_setup_token_is_passed_without_a_login_file(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-example")
+    env = Auth(SUBSCRIPTION, tmp_path / "missing.json").prepare_session(tmp_path / "home")
+    assert env == {"CLAUDE_CODE_OAUTH_TOKEN": "token-example"}
+    assert not (tmp_path / "home/.claude/.credentials.json").exists()
+
+
+def test_setup_token_still_refuses_a_stray_api_key(tmp_path, monkeypatch):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-real-key")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-example")
+    with pytest.raises(AuthError, match="bill"):
+        Auth(SUBSCRIPTION, tmp_path / "missing.json").prepare_session(tmp_path / "home")
+
+
+def test_api_key_mode_ignores_a_setup_token(monkeypatch, tmp_path):
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "not-a-real-key")
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "token-example")
+    assert Auth(API_KEY).prepare_session(tmp_path / "home") == {"ANTHROPIC_API_KEY": "not-a-real-key"}
+
+
+def test_secrets_stay_out_of_the_docker_command_line(tmp_path):
+    backend = DockerClaude(tmp_path / "p.sock", Auth(SUBSCRIPTION))
+    session = AgentSession("porter", "", {}, tmp_path / "session")
+    command = backend.command(session, tmp_path / "home", {"CLAUDE_CODE_OAUTH_TOKEN": "token-example"}, "n")
+    assert "token-example" not in " ".join(command)
+    assert command[command.index("CLAUDE_CODE_OAUTH_TOKEN") - 1] == "-e"
+
+
 @pytest.mark.parametrize(
     ("result", "status"),
     [
