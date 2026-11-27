@@ -190,3 +190,9 @@ def test_prompts_with_lone_surrogates_can_be_sent():
     text = encodable("reference: 'x\udc80y' differs")
     text.encode("utf-8")
     assert "\\udc80" in text
+
+
+def test_real_credentials_are_hidden_from_tests():
+    """conftest drops them, so a test that forgets to clear one can't read or print it."""
+    for name in ("CLAUDE_CODE_OAUTH_TOKEN", "PORTWRIGHT_OAUTH_TOKEN", "ANTHROPIC_API_KEY"):
+        assert name not in os.environ

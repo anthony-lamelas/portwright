@@ -13,6 +13,7 @@ import os
 import shutil
 from pathlib import Path
 
+from portwright.auth import FALLBACK_OAUTH_TOKEN, OAUTH_TOKEN
 from portwright.toolchain import image_available
 
 REPO = Path(__file__).resolve().parents[1]
@@ -23,7 +24,14 @@ SCRATCH = (
 )
 
 
+# Real credentials. No test needs them, and a test that forgot to clear one would read
+# it and could print it in an assertion message. Tests set fake values when they need one.
+CREDENTIAL_VARIABLES = (OAUTH_TOKEN, FALLBACK_OAUTH_TOKEN, "ANTHROPIC_API_KEY")
+
+
 def pytest_configure(config):
+    for name in CREDENTIAL_VARIABLES:
+        os.environ.pop(name, None)
     if not image_available():
         os.environ["PORTWRIGHT_GATES_ON_HOST"] = "1"
     elif not config.option.basetemp:
