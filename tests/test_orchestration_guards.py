@@ -177,3 +177,13 @@ def test_a_resumed_run_refuses_vendor_flags_it_would_ignore(tmp_path):
         _load_or_create_config(options)
     options.vendor = None
     assert _load_or_create_config(options).vendor == {}
+
+
+def test_a_run_refuses_to_start_as_root(monkeypatch):
+    """As root, every agent session failed in a second: Claude Code won't skip permissions as root."""
+    import portwright.cli as cli
+
+    monkeypatch.setattr(cli.os, "getuid", lambda: 0)
+    with pytest.raises(SystemExit) as stopped:
+        cli.command_run(None)
+    assert "can't run as root" in str(stopped.value)

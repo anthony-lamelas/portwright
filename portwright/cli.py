@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import signal
 import sys
 import time
@@ -69,7 +70,16 @@ def _load_or_create_config(options) -> Config:
     return config
 
 
+ROOT_REFUSAL = (
+    "Portwright can't run as root: agent containers run as your user, and Claude Code refuses "
+    "to skip permission prompts as root, so every agent session would fail at once. Run it as "
+    "a non-root user in the docker group."
+)
+
+
 def command_run(options) -> int:
+    if os.getuid() == 0:
+        sys.exit(ROOT_REFUSAL)
     auth = Auth(options.auth)
     try:
         auth.check_environment()
