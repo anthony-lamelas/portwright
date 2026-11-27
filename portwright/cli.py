@@ -144,6 +144,19 @@ def command_run(options) -> int:
     return 0 if not state["stopped"] else 2
 
 
+def _reopen_stopped(store: JsonStore) -> None:
+    """A person's answer lifts the run's stop, so a plain resume retries the stopped phase.
+
+    The phase that stopped was never marked done, so it runs again; the report that
+    recorded the stop is marked undone so it's written again at the end.
+    """
+    def reopen(data):
+        if data.get("stopped"):
+            data["stopped"] = None
+            data["phases_done"] = [phase for phase in data.get("phases_done", []) if phase != "report"]
+    store.update(reopen)
+
+
 def command_approve(options) -> int:
     """Only this command can accept a behavior difference or a new crate."""
     store = JsonStore(Path(options.run_dir).resolve() / "control" / "run.json")
@@ -156,6 +169,7 @@ def command_approve(options) -> int:
         sys.exit("approve needs a difference signature, --crate NAME, or --domain")
     key = "approved_crates" if options.crate else "approved_differences"
     store.update(lambda data: data.setdefault(key, []).append(options.value))
+    _reopen_stopped(store)
     print(f"Approved {options.value}")
     return 0
 
@@ -166,6 +180,9 @@ def command_decide(options) -> int:
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(f"- {options.text.strip()}\n")
+    run_json = path.parent / "run.json"
+    if run_json.exists():
+        _reopen_stopped(JsonStore(run_json))
     print(f"Recorded in {path}")
     return 0
 
@@ -206,6 +223,7 @@ def command_grant(options) -> int:
         decisions = run_dir / "control" / "human_decisions.md"
         with decisions.open("a", encoding="utf-8") as handle:
             handle.write(f"- Granted: you may now change {', '.join(granted)}. {options.reason.strip()}\n")
+        _reopen_stopped(store)
         print(f"Unfroze {', '.join(granted)}")
     return 0
 

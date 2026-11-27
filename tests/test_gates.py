@@ -245,6 +245,27 @@ def test_a_person_can_grant_a_shared_change(tmp_path):
     assert porter._shared_change_attempts("t") == 0, "answered requests no longer count toward blocking"
 
 
+@pytest.mark.parametrize("answer", [
+    ["grant", "--reason", "Expose the constants.", "crates/x/src/lib.rs"],
+    ["approve", "f outcome.args.v[0].v"],
+    ["decide", "Match the exception type only."],
+])
+def test_a_persons_answer_lets_a_stopped_run_resume(tmp_path, answer):
+    """A run stopped for a person's decision must go on after a plain resume (pytimeparse)."""
+    from portwright.cli import main
+    from portwright.orchestrator import Config, Porter
+
+    config = Config(lib="x", module="x", source=tmp_path, package_path="x", tests_path="t", url="u", run_dir=tmp_path / "run")
+    porter = Porter(config, None)
+    porter.run_state.update(lambda d: d.update(
+        shared={"crates/x/src/lib.rs": "h1"}, phases_done=["intake", "checks", "design", "report"],
+        stopped="final_parity needs a person's decision, requested in 2 rounds"))
+    assert main([answer[0], "--run-dir", str(config.run_dir), *answer[1:]]) == 0
+    state = porter.run_state.read()
+    assert state["stopped"] is None
+    assert state["phases_done"] == ["intake", "checks", "design"], "the port phase and the report run again"
+
+
 def test_checks_whose_calls_the_original_mostly_cant_finish_are_refused(tmp_path):
     """Calls where the original times out aren't compared, so a port is free there (#88)."""
     lib = tmp_path / "lib"
